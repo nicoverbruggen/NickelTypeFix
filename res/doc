@@ -13,7 +13,6 @@ renderer.
 
 - nhf_enabled:1            enable/disable; 0 = behaves as if not installed
 - nhf_no_hinting:1         load glyphs unhinted (the fix); 0 = stock behaviour
-- nhf_fractional_cbox:1    copy the raw outline control box into glyph metrics
 - nhf_hinting_allowlist:   comma-separated families exempt from nhf_no_hinting
 
 Changes take effect on reboot.

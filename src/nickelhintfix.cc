@@ -11,9 +11,10 @@
 #include "config.h"
 #include "util.h"
 
-// Minimal FreeType type shims — only the fields we touch. The struct layouts
-// match the device's FreeType so we can read face->family_name / face->glyph and
-// the glyph outline/metrics.
+// Minimal FreeType type shims — only what we touch. We read face->family_name,
+// so FT_FaceRec's layout up to that field must match the device's FreeType; the
+// later fields are kept for fidelity. FT_BBox/FT_Generic/FT_GlyphSlot exist only
+// because FT_FaceRec embeds/points to them.
 typedef int FT_Error;
 typedef signed int FT_Int;
 typedef signed int FT_Int32;
@@ -22,13 +23,6 @@ typedef unsigned short FT_UShort;
 typedef short FT_Short;
 typedef long FT_Long;
 typedef long FT_Pos;
-typedef signed long FT_Fixed;
-typedef void *FT_Library;
-
-typedef struct FT_Vector_ {
-    FT_Pos x;
-    FT_Pos y;
-} FT_Vector;
 
 typedef struct FT_BBox_ {
     FT_Pos xMin;
@@ -37,61 +31,13 @@ typedef struct FT_BBox_ {
     FT_Pos yMax;
 } FT_BBox;
 
-typedef struct FT_Bitmap_ {
-    unsigned int rows;
-    unsigned int width;
-    int pitch;
-    unsigned char *buffer;
-    unsigned short num_grays;
-    unsigned char pixel_mode;
-    unsigned char palette_mode;
-    void *palette;
-} FT_Bitmap;
-
-typedef struct FT_Outline_ {
-    short n_contours;
-    short n_points;
-    FT_Vector *points;
-    char *tags;
-    short *contours;
-    int flags;
-} FT_Outline;
-
 typedef struct FT_Generic_ {
     void *data;
     void *finalizer;
 } FT_Generic;
 
-typedef struct FT_Glyph_Metrics_ {
-    FT_Pos width;
-    FT_Pos height;
-    FT_Pos horiBearingX;
-    FT_Pos horiBearingY;
-    FT_Pos horiAdvance;
-    FT_Pos vertBearingX;
-    FT_Pos vertBearingY;
-    FT_Pos vertAdvance;
-} FT_Glyph_Metrics;
-
 typedef struct FT_GlyphSlotRec_ *FT_GlyphSlot;
 typedef struct FT_FaceRec_ *FT_Face;
-
-typedef struct FT_GlyphSlotRec_ {
-    FT_Library library;
-    FT_Face face;
-    FT_GlyphSlot next;
-    FT_UInt glyph_index;
-    FT_Generic generic;
-    FT_Glyph_Metrics metrics;
-    FT_Fixed linearHoriAdvance;
-    FT_Fixed linearVertAdvance;
-    FT_Vector advance;
-    int format;
-    FT_Bitmap bitmap;
-    FT_Int bitmap_left;
-    FT_Int bitmap_top;
-    FT_Outline outline;
-} FT_GlyphSlotRec;
 
 typedef struct FT_FaceRec_ {
     FT_Long num_faces;
@@ -118,13 +64,11 @@ typedef struct FT_FaceRec_ {
     FT_GlyphSlot glyph;
 } FT_FaceRec;
 
-static const int NHF_FT_GLYPH_FORMAT_OUTLINE = 0x6f75746c; // 'outl'
 static const FT_Int32 NHF_FT_LOAD_NO_HINTING = 0x2;
 
 static const char *const NHF_LIBKOBO = "/usr/local/Kobo/platforms/libkobo.so";
 
 static FT_Error (*real_FT_Load_Glyph)(FT_Face, FT_UInt, FT_Int32);
-static void (*p_FT_Outline_Get_CBox)(const FT_Outline*, FT_BBox*);
 
 static bool nhf_safety_disabled = false;
 static bool nhf_safety_log_dumped = false;
@@ -139,17 +83,18 @@ static bool nhf_no_hinting() {
     return nhf_global_config_bool("nhf_no_hinting", true);
 }
 
-static bool nhf_fractional_cbox() {
-    return nhf_global_config_bool("nhf_fractional_cbox", true);
-}
-
 // Comma-separated font families allowed to keep their own native hinting (i.e.
 // exempt from nhf_no_hinting). Matched case-insensitively against the FT face.
-static bool nhf_font_hinting_allowed(const char *family) {
-    if (!family || !*family)
-        return false;
+static bool nhf_font_hinting_allowed(FT_Face face) {
+    // Check the (usually empty) allow-list first. With an empty list — the
+    // default — we return before ever reading face->family_name, so the common
+    // path never touches the FreeType struct layout we shim.
     const char *list = nhf_global_config_get("nhf_hinting_allowlist");
     if (!list || !*list)
+        return false;
+
+    const char *family = (face && face->family_name) ? face->family_name : NULL;
+    if (!family || !*family)
         return false;
 
     size_t flen = strlen(family);
@@ -209,12 +154,15 @@ static bool nhf_safety_marker_present() {
 // --- Init / uninstall ----------------------------------------------------------
 
 static int nhf_init() {
+    // Parse and cache config now, while we are still single-threaded at startup,
+    // so the FT_Load_Glyph hook (called from multiple render threads) never races
+    // to lazily build the global config. Same reason we prime the safety marker
+    // cache below.
     nhf_global_config_get("");
     const char *allowlist = nhf_global_config_get("nhf_hinting_allowlist");
-    NHF_LOG("startup: nhf_enabled=%d nhf_no_hinting=%d nhf_fractional_cbox=%d nhf_hinting_allowlist='%s'",
+    NHF_LOG("startup: nhf_enabled=%d nhf_no_hinting=%d nhf_hinting_allowlist='%s'",
         nhf_enabled() ? 1 : 0,
         nhf_no_hinting() ? 1 : 0,
-        nhf_fractional_cbox() ? 1 : 0,
         allowlist ? allowlist : "");
     if (nhf_safety_marker_present())
         NHF_LOG("startup: disabled-by-safety marker present; passing through");
@@ -263,17 +211,7 @@ static struct nh_hook NickelHintFixHooks[] = {
         .sym_new = "_nhf_FT_Load_Glyph",
         .lib = NHF_LIBKOBO,
         .out = nh_symoutptr(real_FT_Load_Glyph),
-        .desc = "load glyphs unhinted and/or apply a fractional control box",
-    },
-    {0},
-};
-
-static struct nh_dlsym NickelHintFixSymbols[] = {
-    {
-        .name = "FT_Outline_Get_CBox",
-        .out = nh_symoutptr(p_FT_Outline_Get_CBox),
-        .desc = "outline control box for nhf_fractional_cbox",
-        .optional = true,
+        .desc = "load glyphs unhinted",
     },
     {0},
 };
@@ -282,7 +220,7 @@ NickelHook(
     .init = &nhf_init,
     .info = &NickelHintFixInfo,
     .hook = NickelHintFixHooks,
-    .dlsym = NickelHintFixSymbols,
+    .dlsym = NULL,
     .uninstall = &nhf_uninstall,
 )
 
@@ -294,27 +232,11 @@ extern "C" __attribute__((visibility("default"))) FT_Error _nhf_FT_Load_Glyph(FT
     if (nhf_safety_disabled || nhf_safety_marker_present())
         return real_FT_Load_Glyph(face, glyph_index, load_flags);
 
-    const char *family = (face && face->family_name) ? face->family_name : "";
-
     // Load uninstructed glyphs without hinting so iType draws the raw
     // outline instead of grid-fitting it. Skipped for allow-listed families.
     FT_Int32 effective_flags = load_flags;
-    if (nhf_enabled() && nhf_no_hinting() && !nhf_font_hinting_allowed(family))
+    if (nhf_enabled() && nhf_no_hinting() && !nhf_font_hinting_allowed(face))
         effective_flags |= NHF_FT_LOAD_NO_HINTING;
 
-    FT_Error err = real_FT_Load_Glyph(face, glyph_index, effective_flags);
-
-    // Fractional control box: copy the raw outline cbox back into the glyph's
-    // vertical metrics, in case iType snaps the metrics/placement. Applies to all
-    // glyph loads (it mainly matters for unhinted glyphs, whose outline is
-    // already fractional).
-    if (nhf_enabled() && nhf_fractional_cbox() && !err && face && face->glyph &&
-        face->glyph->format == NHF_FT_GLYPH_FORMAT_OUTLINE && p_FT_Outline_Get_CBox) {
-        FT_BBox cb = {0, 0, 0, 0};
-        p_FT_Outline_Get_CBox(&face->glyph->outline, &cb);
-        face->glyph->metrics.horiBearingY = cb.yMax;
-        face->glyph->metrics.height = cb.yMax - cb.yMin;
-    }
-
-    return err;
+    return real_FT_Load_Glyph(face, glyph_index, effective_flags);
 }

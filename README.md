@@ -44,7 +44,6 @@ Settings live in `KOBOeReader/.adds/nickelhintfix/config`:
 |-----|---------|---------|
 | `nhf_enabled` | `1` | Enable or disable NickelHintFix. `0` makes every hook pass through, so the device renders exactly as if the mod were not installed. |
 | `nhf_no_hinting` | `1` | The fix. `1` loads glyphs with `FT_LOAD_NO_HINTING` (no iType grid-fitting, so heights are consistent). `0` is stock behaviour. |
-| `nhf_fractional_cbox` | `1` | On every glyph load, copies the raw outline control box into the glyph's vertical metrics, in case iType snaps the metrics/placement. Mainly relevant for unhinted glyphs (whose outline is already fractional). |
 | `nhf_hinting_allowlist` | *(empty)* | Comma-separated font families exempt from `nhf_no_hinting` (allowed to keep their own native hinting). Matched case-insensitively, e.g. `Georgia, Kobo Nickel`. |
 
 Changes take effect on reboot.
