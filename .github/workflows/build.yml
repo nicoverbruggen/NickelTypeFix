@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: NickelHintFix
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pgaskin/nickeltc:1.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: make clean all strip koboroot
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: NickelHintFix
+          path: |
+            KoboRoot.tgz
+            src/libnickelhintfix.so
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: NickelHintFix
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          name: NickelHintFix ${{ github.ref_name }}
+          body: |
+            Install by copying `KoboRoot.tgz` to the Kobo's `.kobo` folder, ejecting the device, and rebooting.
+          files: KoboRoot.tgz

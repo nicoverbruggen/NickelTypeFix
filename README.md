@@ -17,6 +17,69 @@ Two natural assumptions about the font turn out to be wrong — confirmed by dis
 
 The actual trigger is simply that **hinting is requested at glyph-load** for an uninstructed glyph. For an unmodified font, the reliable engine-level fix is the runtime load flag. The same raw-outline result can also be achieved at the font level by adding no-op per-glyph instructions, which routes iType away from its bad uninstructed-glyph auto-gridfit path without changing the outlines. This also explains why the same fonts look fine elsewhere: **desktop/stock FreeType** renders them with its auto-hinter (position-stable) or the stock TrueType hinter — not iType's auto-gridfit. The snapping happens inside the iType driver at glyph-load, below the renderer, which is why swapping the renderer doesn't help but a load-time flag does.
 
+## Binary validation
+
+These claims were checked against the Kobo binaries from a stock `KoboRoot` image:
+
+- `usr/lib/libfreetype.so.6.6.2`
+- `usr/local/Kobo/platforms/libkobo.so`
+
+The glyph-load path looks like this:
+
+```text
+Nickel reader / WebKit layout
+  -> Qt font engine: QFontEngineFT::loadGlyph (libkobo.so)
+     -> QFontEngineFT::loadFlags
+        base flags 0x200 + glyph flag 0x8 = 0x208
+     -> NickelHintFix FT_Load_Glyph hook
+        -> disabled or allow-listed:
+           real FT_Load_Glyph(face, glyph, 0x208)
+        -> nhf_no_hinting=1:
+           real FT_Load_Glyph(face, glyph, 0x20a)
+           adds FT_LOAD_NO_HINTING (0x2)
+        -> Kobo libfreetype: FT_Load_Glyph @ 0x6f260
+           tests 0x8002 load-flag mask
+        -> iType driver load_glyph
+           itype_driver_class + 0x48 -> target 0x7567d
+           -> no per-glyph instructions + hinting requested:
+              iType uninstructed auto-gridfit
+              position-sensitive snap -> wobble
+           -> per-glyph instructions + hinting requested:
+              idrv_expand_stik
+              iType bytecode interpreter
+           -> hinting disabled:
+              raw scaled outline
+              no grid-fit snap -> stable geometry
+
+gasp table:
+  loaded and cached, but not read by this glyph-rendering path
+```
+
+The FreeType binary is not stock upstream FreeType alone. It contains Monotype iType symbols and strings including `itype_driver_class`, `itype_renderer_class`, `itype_raster`, `itype drv`, `itype renderer`, and `idrv_expand_stik`. The iType driver class is present at `.data.rel.ro:0xd0e9c`; its module flags are `0x401`, matching `FT_MODULE_FONT_DRIVER | DRIVER_HAS_HINTER`, and its glyph-load function pointer resolves to the iType glyph loader at `0x7567d`.
+
+The main FreeType entry point, `FT_Load_Glyph` at `0x6f260`, makes the load-flag decision before handing control to the font driver. At `0x6f2fc` it builds the mask `0x8002`, which is `FT_LOAD_NO_AUTOHINT | FT_LOAD_NO_HINTING`, and at `0x6f302` it branches away from the auto-hinter when either bit is set. For iType-driven fonts, the auto-hinter path is not selected; the call continues through the driver's `load_glyph` slot, with the caller's load flags passed through to iType.
+
+Inside the iType glyph loader, the important branch is the per-glyph instruction-count check:
+
+```text
+0x757a0  ldrsh.w r3, [glyph, #0x28]  ; per-glyph instruction count
+0x757a4  cmp     r3, #0
+0x757a6  ble     0x7585e              ; zero instructions: skip interpreter path
+0x757a8  ldr     r3, [r6, #0x18]
+0x757aa  ldr     r3, [r3, #0x18]
+0x757ac  lsls    r2, r3, #0x1e       ; test scaler flags
+0x757ae  bpl     0x7585e              ; hinting disabled: skip interpreter path
+0x757c6  blx     idrv_expand_stik     ; instructed + hinted glyphs reach interpreter
+```
+
+That confirms the core mechanism: uninstructed glyphs do not enter the bytecode interpreter, while instructed glyphs can. Adding a no-op per-glyph instruction therefore changes which iType path the glyph takes without changing the outline. Adding `FT_LOAD_NO_HINTING` changes the scaler flags instead, making iType skip grid-fitting and emit the raw scaled outline.
+
+The `gasp` table was also checked. The table tag `0x67617370` is recognized by the sfnt table-loading code, and the loader at `0x947b8` caches `gasp` fields on the face. `FT_Get_Gasp` at `0x7187c` reads those cached fields when explicitly asked. But the glyph-load and rendering path does not call `FT_Get_Gasp`, and no rendering-path read of the cached `gasp` fields was found. This matches the practical result: editing `gasp` does not change the wobble.
+
+`libkobo.so` is where Nickel's Qt font engine calls into this FreeType build. It imports `FT_Load_Glyph`, and the `QFontEngineFT::loadGlyph` path calls it through the PLT. `QFontEngineFT` initializes its base load flags to `0x200`, then the glyph path ORs in `0x8` before the normal call, producing the observed `0x208` load flags. NickelHintFix adds `FT_LOAD_NO_HINTING` (`0x2`) to that value, so the affected call becomes `0x20a`.
+
+Static binary inspection validates the control flow, flags, and table access described above. The exact pixel-height examples are runtime evidence from rasterized output rather than facts the binary alone can prove.
+
 ## The fix
 
 NickelHintFix hooks `FT_Load_Glyph` (in Kobo's `libkobo.so` platform plugin) and ORs in **`FT_LOAD_NO_HINTING`** before the real call (`0x208` -> `0x20a`). That sets iType's internal "skip grid-fit" flag, so it emits the raw scaled outline with no snapping. Every instance of a glyph then has identical geometry and the same letter renders at exactly one height — confirmed on-device, where each affected letter collapses from two heights to one.
