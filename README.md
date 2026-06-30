@@ -133,7 +133,8 @@ Settings live in `KOBOeReader/.adds/nickelhintfix/config`:
 | `nhf_enabled` | `1` | Enable or disable NickelHintFix. `0` makes every hook pass through, so the device renders exactly as if the mod were not installed. |
 | `nhf_no_hinting` | `1` | The fix. `1` loads glyphs with `FT_LOAD_NO_HINTING` (no iType grid-fitting, so heights are consistent). `0` is stock behaviour. |
 | `nhf_hinting_allowlist` | *(empty)* | Comma-separated font families exempt from `nhf_no_hinting` (allowed to keep their own native hinting). Matched case-insensitively, e.g. `Georgia, Kobo Nickel`. |
-| `nhf_vertfix` | `1` | The vertical-text fix. `1` withholds `optimizeLegibility`/`geometricPrecision` from vertical (tategaki) books so they render correctly. `0` leaves Nickel's behaviour unchanged. |
+| `nhf_vertfix` | `1` | The vertical-text fix. `1` pushes `text-rendering:auto` onto vertical (tategaki) pages so they render correctly under "better typography". `0` leaves Nickel's behaviour unchanged. |
+| `nhf_vertfix_debug` | `0` | Verbose per-call logging for the vertical fix (advanced). `1` traces every `CustomWebView::setWritingDirection`; off by default. Not written to the default config. |
 
 Changes take effect on reboot.
 
