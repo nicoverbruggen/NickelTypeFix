@@ -274,7 +274,15 @@ static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
         sites[i] = site;
     }
     int wrote = 0;
-    for (int i = 0; i < fx->n; i++) if (!already[i] && ntf_write(sites[i], fx->patch[i].repl, fx->patch[i].plen)) wrote++;
+    for (int i = 0; i < fx->n; i++) {
+        if (already[i]) continue;
+        if (ntf_write(sites[i], fx->patch[i].repl, fx->patch[i].plen)) { wrote++; continue; }
+        // write failed mid-fix: restore any site we already patched so the fix stays both-or-nothing
+        NTF_LOG("justify fix '%s' write failed at '%s'; rolling back %d edit(s)", fx->name, fx->patch[i].label, wrote);
+        for (int j = i - 1; j >= 0; j--)
+            if (!already[j]) ntf_write(sites[j], fx->patch[j].orig, fx->patch[j].plen);
+        return;
+    }
     NTF_LOG("justify fix '%s' APPLIED (%d edit(s))", fx->name, wrote);
 }
 
