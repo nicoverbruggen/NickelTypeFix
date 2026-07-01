@@ -99,15 +99,23 @@ The mod is not tied to any one model. The two in-memory patches related to justi
 
 ## Safety
 
-There are two independent layers of protection, so a failure at worst sits a single fix out — and at absolute worst cannot brick the device.
+There are two independent layers of protection, so a failure at worst sits a single fix out. The mod should also not be able to brick the device.
 
-**Whole-mod boot failsafe.** Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`, and only renames it back three seconds *after* Nickel has started successfully. If applying the hooks or the justification patches ever crashes or hangs Nickel during boot, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
+### Whole-mod boot failsafe
 
-**Per-fix graceful degradation.** Each fix engages only if it can be applied safely, and a failure in one never affects the others:
+Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`, and only renames it back three seconds *after* Nickel has started successfully. 
 
-- Hooked and looked-up symbols are optional — if a symbol isn't present on a given firmware, that fix simply sits out instead of aborting the mod.
-- Where a justification fix can't locate its instruction pattern, or the bytes at a target site aren't what's expected, the fix logs and is skipped. When it does apply, all of its edits are located and verified up front and are written both-or-nothing (a mid-write failure rolls the already-patched sites back).
-- The hinting fix carries a persistent `disabled-by-safety` marker: if `FT_Load_Glyph` is ever unexpectedly unavailable at runtime, it records the marker and passes glyphs through untouched on this and every later boot, leaving the vertical and justification fixes running.
+If applying the hooks or the justification patches ever crashes or hangs Nickel during boot, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
+
+### Per-fix graceful degradation
+
+Each fix engages only if it can be applied safely, and a failure in one never affects the others.
+
+1. Hooked and looked-up symbols are optional: if a symbol isn't present on a given firmware, that fix does not run (instead of aborting the mod).
+
+2. If the justification fix can't locate its instruction pattern, or the bytes at a target site aren't what's expected, the fix logs and is skipped. When it does apply, all of its edits are located and verified up front and are written both-or-nothing (a mid-write failure rolls the already-patched sites back).
+
+3. The hinting fix carries a persistent `disabled-by-safety` marker: if `FT_Load_Glyph` is ever unexpectedly unavailable at runtime, it records the marker and passes glyphs through untouched on this and every later boot, leaving the vertical and justification fixes running.
 
 ## Build
 
@@ -131,3 +139,7 @@ Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook r
 ## Development
 
 This repository was created with the assistance of large language models (specifically, Opus 4.8 and GPT 5.5). All of it was carefully reviewed by the author, and tested on the author's actual Kobo devices before release.
+
+## License
+
+MIT.
