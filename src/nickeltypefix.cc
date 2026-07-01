@@ -302,9 +302,14 @@ static void ntf_rmtree(const char *path) {
     rmdir(path);
 }
 static void ntf_remove_superseded(void) {
+    // While our init runs during startup, a co-loaded NickelHook mod has failsafe-renamed itself
+    // to <name>.failsafe (it renames back a few seconds later), so unlink that name too or a
+    // live superseded mod escapes the one-shot cleanup.
     static const char *old_so[] = {
         "/usr/local/Kobo/imageformats/libnickelhintfix.so",
+        "/usr/local/Kobo/imageformats/libnickelhintfix.so.failsafe",
         "/usr/local/Kobo/imageformats/libnickeljustifyfix.so",
+        "/usr/local/Kobo/imageformats/libnickeljustifyfix.so.failsafe",
     };
     for (size_t i = 0; i < sizeof(old_so) / sizeof(old_so[0]); i++)
         if (access(old_so[i], F_OK) == 0 && unlink(old_so[i]) == 0)
