@@ -130,24 +130,6 @@ bool ntf_config_bool(ntf_config_t *cfg, const char *key, bool default_value) {
     return default_value;
 }
 
-double ntf_config_double(ntf_config_t *cfg, const char *key, double default_value) {
-    const char *val = ntf_config_get(cfg, key);
-    if (!val || !*val)
-        return default_value;
-
-    char *end = NULL;
-    errno = 0;
-    double parsed = strtod(val, &end);
-    bool trailing = false;
-    for (const char *p = end; p && *p; p++)
-        if (!isspace((unsigned char)*p)) { trailing = true; break; }
-    if (errno || end == val || trailing) {
-        NTF_LOG("warning: invalid number for '%s': '%s'; using default %.4f", key, val, default_value);
-        return default_value;
-    }
-    return parsed;
-}
-
 void ntf_config_free(ntf_config_t *cfg) {
     if (!cfg)
         return;
@@ -176,8 +158,4 @@ const char *ntf_global_config_get(const char *key) {
 
 bool ntf_global_config_bool(const char *key, bool default_value) {
     return ntf_config_bool(ntf_global_config(), key, default_value);
-}
-
-double ntf_global_config_double(const char *key, double default_value) {
-    return ntf_config_double(ntf_global_config(), key, default_value);
 }

@@ -19,11 +19,9 @@ typedef struct ntf_config_t ntf_config_t;
 ntf_config_t *ntf_config_parse(void);
 const char *ntf_config_get(ntf_config_t *cfg, const char *key);
 bool ntf_config_bool(ntf_config_t *cfg, const char *key, bool default_value);
-double ntf_config_double(ntf_config_t *cfg, const char *key, double default_value);
 void ntf_config_free(ntf_config_t *cfg);
 const char *ntf_global_config_get(const char *key);
 bool ntf_global_config_bool(const char *key, bool default_value);
-double ntf_global_config_double(const char *key, double default_value);
 
 #ifdef __cplusplus
 }
