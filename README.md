@@ -94,7 +94,7 @@ The mod is not tied to any one model. The two in-memory patches related to justi
 
 ## Safety
 
-Where a pattern or symbol isn't found on a given firmware, that fix logs and is disabled. This way, the mod's failsafe engages, and this cannot breaks the device.
+Where a pattern or symbol isn't found on a given firmware, that fix logs and is disabled. This way, the mod's failsafe engages, and this cannot break the device.
 
 ## Build
 
