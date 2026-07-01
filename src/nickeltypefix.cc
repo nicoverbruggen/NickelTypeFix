@@ -10,8 +10,8 @@
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1–2 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
-// -> mprotect + write + flush icache). On install this mod also removes the superseded standalone
-// mods (NickelHintFix, NickelJustifyFix) so they don't co-load.
+// -> mprotect + write + flush icache). On first install (no config file yet) this mod also removes
+// the superseded standalone mods (NickelHintFix, NickelJustifyFix) so they don't co-load.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE          // dl_iterate_phdr / ElfW (guard: gnu++ dialect may predefine it)
@@ -318,8 +318,13 @@ static void ntf_remove_superseded(void) {
 
 // ================= init =================
 static int ntf_init() {
+    // First-install detection: the config file is the one first-boot artifact we create ourselves
+    // (the doc and uninstall marker ship inside KoboRoot.tgz, so they exist from the very first
+    // boot). Check before priming the config, which writes the missing file.
+    bool first_install = (access(NTF_CONFIG_DIR "/config", F_OK) != 0);
     ntf_global_config_get("");                      // prime config while single-threaded
-    ntf_remove_superseded();                        // stop the old standalone mods co-loading
+    if (first_install)
+        ntf_remove_superseded();                    // stop the old standalone mods co-loading
     NTF_LOG("startup: enabled=%d no_hinting=%d vertfix=%d justify_kospan=%d justify_punct=%d log=%d",
         ntf_enabled(), ntf_no_hinting(), ntf_vertfix(),
         ntf_global_config_bool("ntf_justify_kospan", true), ntf_global_config_bool("ntf_justify_punct", true), ntf_log());

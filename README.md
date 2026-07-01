@@ -1,7 +1,6 @@
 # NickelTypeFix
 
-A [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several
-**text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack. 
+A [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack. 
 
 Each fix is independent and fail-safe. Individual fixes engage only if they can safely be applied, or otherwise don't apply. You can disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
 
@@ -128,13 +127,24 @@ git submodule update --init
 
 ## Install
 
-Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. 
-
-On boot the mod also removes the older standalone mods it supersedes (NickelHintFix, NickelJustifyFix) so they don't co-load.
+Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. The mod should automatically install itself. After an automatic restart, when your home screen is visible again, the mod should have loaded!
 
 ## Uninstall
 
 Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
+
+## Notes
+
+On the first boot after installation, the mod also removes the older standalone mods it supersedes so they don't co-load. You probably won't be impacted, as these were mostly used by the author and distributed to only a handful of people before this mod was released.
+
+Specifically, the following files are deleted (if present):
+
+- `/usr/local/Kobo/imageformats/libnickelhintfix.so`
+- `/usr/local/Kobo/imageformats/libnickeljustifyfix.so`
+- `KOBOeReader/.adds/nickelhintfix/` (config directory)
+- `KOBOeReader/.adds/nickeljustifyfix/` (config directory)
+
+Nothing else is ever removed, and this cleanup does not run on later boots.
 
 ## Development
 
