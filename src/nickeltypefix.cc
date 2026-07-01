@@ -8,7 +8,7 @@
 //   3. Justify: koboSpan     — in-memory patch, QTextEngine::justify (libQtGui)   [ntf_justify_kospan]
 //   4. Justify: punctuation  — in-memory patch, isInterIdeographExpansionTarget (libQtWebKit) [ntf_justify_punct]
 //
-// Cause + fix for each is documented in docs/how-it-works.md. Fixes 1–2 use NickelHook PLT hooks;
+// Cause + fix for each is documented in ABOUT.md. Fixes 1–2 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
 // -> mprotect + write + flush icache). On install this mod also removes the superseded standalone
 // mods (NickelHintFix, NickelJustifyFix) so they don't co-load.

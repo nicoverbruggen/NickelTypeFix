@@ -3,7 +3,7 @@
 Fixes several text-rendering problems in Kobo's reader (firmware 4.x). Each fix is independent and
 fails safe — it only engages where its seam exists, and never breaks the device. Nothing is
 written to any device library on disk; a reboot without the mod is stock. Causes + mechanisms are
-in docs/how-it-works.md in the repo.
+in ABOUT.md in the repo.
 
 Fixes:
 - Glyph "wobble": some fonts render letters a pixel too high/low; loaded unhinted to flatten it.

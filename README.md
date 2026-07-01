@@ -23,7 +23,7 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 
 **This fixes what is usually broken when you enable `optimizeLegibility`, which is justification and vertical CJK text.**
 
-The point is to keep `optimizeLegibility` (which gets you ligatures, better text rendering, and optionally hyphenation) without any bugs. The cause of the bugs and the mechanism for each fix is [documented here](docs/how-it-works.md).
+The point is to keep `optimizeLegibility` (which gets you ligatures, better text rendering, and optionally hyphenation) without any bugs. The cause of the bugs and the mechanism for each fix is [documented here](ABOUT.md).
 
 ## Prerequisite: enable `optimizeLegibility`
 
