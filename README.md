@@ -122,3 +122,7 @@ On boot the mod also removes the older standalone mods it supersedes (NickelHint
 ## Uninstall
 
 Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
+
+## Development
+
+This repository was created with the assistance of large language models (specifically, Opus 4.8 and GPT 5.5). All of it was carefully reviewed by the author, and tested on the author's actual Kobo devices before release.
