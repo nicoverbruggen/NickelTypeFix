@@ -1,50 +1,71 @@
 # NickelTypeFix
 
 A [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several
-**text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack. Each fix
-is independent and fail-safe — it engages only where its seam exists and sits out safely
-otherwise. Nothing is written to any device library on disk; a boot without the mod is stock.
+**text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack. 
 
-> Firmware **4.x only** (inert on 5.x). See [Compatibility](#compatibility).
+Each fix is independent and fail-safe. Individual fixes engage only if they can safely be applied, or otherwise don't apply. You can disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
+
+> [!IMPORTANT]
+> This mod works on Kobo software version **4.x only** (inert on 5.x). See [Compatibility](#compatibility) for more information about compatibility.
 
 ## What it fixes
 
-1. **Glyph "wobble"** — letters that drift a pixel up/down, giving an uneven line, on fonts with
-   no hinting instructions. → loads them unhinted so iType stops grid-fitting inconsistently.
-2. **Vertical (tategaki) CJK text** rendering sideways/misplaced under `optimizeLegibility`. →
-   keeps vertical books on WebKit's correct rendering path.
-3. **Justified kepubs breaking at sentence boundaries** (uneven gaps) under `optimizeLegibility` —
-   the main justification fix. → corrects Qt's justifier so the boundary space gets its share.
-4. **Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). →
-   secondary justify fix.
+1. **Glyph "wobble"** — letters that drift a pixel up/down, giving an uneven line, on fonts with no hinting instructions. 
+→ loads unhinted fonts, so iType stops grid-fitting inconsistently.
+2. **Vertical (tategaki) CJK text** rendering sideways/misplaced under `optimizeLegibility`. 
+→ keeps vertical books on WebKit's correct rendering path.
+3. **Justified kepubs breaking at sentence boundaries** (uneven gaps) under `optimizeLegibility`. the main justification fix. 
+→ corrects Qt's justifier so the boundary space gets its share.
+4. **Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
+→ secondary justification fix.
 
-Ligatures/kerning stay on throughout — the point is to keep `optimizeLegibility` *and* have text
-render correctly. Cause + mechanism for each fix is in **[docs/how-it-works.md](docs/how-it-works.md)**.
+## Why was this made?
 
-## Prerequisite: enable optimizeLegibility
+**This fixes what is usually broken when you enable `optimizeLegibility`, which is justification and vertical CJK text.**
 
-Fix 1 (glyph wobble) is the standout — it's independent of everything below, needs no
-configuration, and is arguably the biggest single improvement the mod makes. It just works.
+The point is to keep `optimizeLegibility` (which gets you ligatures, better text rendering, and optionally hyphenation) without any bugs. The cause of the bugs and the mechanism for each fix is [documented here](docs/how-it-works.md).
 
-Fixes 2–4, by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering
-path is turned on — that's the path they correct. It's off by default and is a manual opt-in in the
-Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
+## Prerequisite: enable `optimizeLegibility`
+
+Fix 1 (glyph wobble) is the standout — it's independent of everything below, needs no configuration, and is arguably the biggest single improvement the mod makes. It just works.
+
+Fixes 2–4, by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering path is turned on — that's the path they correct. It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
 
     [Reading]
     webkitTextRendering=optimizeLegibility
 
-Then reboot. With this off, the vertical and justification fixes will correctly log that they
-engaged, but you won't see a difference because the broken render path is never taken — while Fix 1
-keeps improving every book regardless.
+Then reboot. With this off, the vertical and justification fixes will correctly log that they engaged, but you won't see a difference because the broken render path is never taken.
 
 ## Screenshots
 
-<!-- TODO: drop before/after images into docs/img/ and they'll render here -->
-| | before | after |
+These are actual page captures from the author's own **Kobo Clara BW** before and after installing the mod.
+
+The middle **diff** overlays the two: **red** is ink the fix removed (its old position), **green** is ink the fix added (its new position), white is unchanged. This way, the effect is obvious even where it's subtle on the page.
+
+### 1. Glyph outline rendering fix ("wobble" fix)
+
+Letters can drift exactly one pixel off the baseline; the diff lights up nearly every glyph the unhinting re-rasterizes:
+
+| original | diff | fixed |
 |---|---|---|
-| Justified kepub (Fix 3) | ![justify before](docs/img/justify-before.png) | ![justify after](docs/img/justify-after.png) |
-| Glyph wobble (Fix 1) | ![wobble before](docs/img/wobble-before.png) | ![wobble after](docs/img/wobble-after.png) |
-| Vertical text (Fix 2) | ![vertical before](docs/img/vertical-before.png) | ![vertical after](docs/img/vertical-after.png) |
+| ![wobble original](docs/screenshots/wobble.png) | ![wobble diff](docs/highlight/wobble-diff.png) | ![wobble fixed](docs/screenshots/wobble-free.png) |
+
+### 2. Vertical text orientation fix
+
+CJK punctuation (`、` `。`) and small kana float centered in the
+cell instead of tucking to the top-right where vertical Japanese needs them:
+
+| original | diff | fixed |
+|---|---|---|
+| ![vertical original](docs/screenshots/cjk-broken.png) | ![vertical diff](docs/highlight/cjk-diff.png) | ![vertical fixed](docs/screenshots/cjk-correct.png) |
+
+### 3. Justification fix
+
+Most noticeable: a starved gap at the sentence boundary (`justification   maths.`) with the rest of the line over-stretched, vs. even word spacing:
+
+| original | diff | fixed |
+|---|---|---|
+| ![justify original](docs/screenshots/justification-broken.png) | ![justify diff](docs/highlight/justify-diff.png) | ![justify fixed](docs/screenshots/justification-correct.png) |
 
 ## Configuration
 
@@ -65,14 +86,15 @@ Each fix logs whether it engaged, so one boot tells the whole story.
 
 ## Compatibility
 
-Requires Kobo firmware **4.21+ (the 4.x series: Qt 5.2 / QtWebKit / iType)**. It does **not** work
-on 5.x (Qt6 / Chromium — no iType, no QtWebKit, and NickelHook doesn't load there).
+Requires Kobo firmware **4.21+ (the 4.x series, which uses Qt 5.2 / QtWebKit / iType)**. 
 
-It's **not** tied to any one model — the two in-memory patches (Fixes 3–4) anchor to
-position-independent instruction patterns, verified byte-identical across the 4.38 and 4.45
-firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour). Where a
-pattern or symbol isn't found on a given firmware, that fix logs and sits out — the mod fails
-safe, never breaks the device.
+**It does not work on 5.x (Qt6 / Chromium — no iType, no QtWebKit, and NickelHook doesn't load there).**
+
+The mod is not tied to any one model. The two in-memory patches related to justification anchor to position-independent instruction patterns, verified byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour).
+
+## Safety
+
+Where a pattern or symbol isn't found on a given firmware, that fix logs and is disabled. This way, the mod's failsafe engages, and this cannot breaks the device.
 
 ## Build
 
@@ -85,10 +107,10 @@ git submodule update --init
 
 ## Install
 
-Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. On boot the mod also removes
-the older standalone mods it supersedes (NickelHintFix, NickelJustifyFix) so they don't co-load.
+Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. 
+
+On boot the mod also removes the older standalone mods it supersedes (NickelHintFix, NickelJustifyFix) so they don't co-load.
 
 ## Uninstall
 
-Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook removes the mod on the
-next boot. The in-memory patches revert automatically (nothing was written to disk).
+Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
