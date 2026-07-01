@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: NickelHintFix
+    name: NickelTypeFix
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/pgaskin/nickeltc:1.0
@@ -27,10 +27,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: NickelHintFix
+          name: NickelTypeFix
           path: |
             KoboRoot.tgz
-            src/libnickelhintfix.so
+            src/libnickeltypefix.so
 
   release:
     name: Release
@@ -44,13 +44,13 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v6
         with:
-          name: NickelHintFix
+          name: NickelTypeFix
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          name: NickelHintFix ${{ github.ref_name }}
+          name: NickelTypeFix ${{ github.ref_name }}
           body: |
             Install by copying `KoboRoot.tgz` to the Kobo's `.kobo` folder, ejecting the device, and rebooting.
           files: KoboRoot.tgz

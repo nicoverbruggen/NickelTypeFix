@@ -9,21 +9,21 @@
 #include "config.h"
 #include "util.h"
 
-typedef struct nhf_config_entry_t {
+typedef struct ntf_config_entry_t {
     char *key;
     char *val;
-    struct nhf_config_entry_t *next;
-} nhf_config_entry_t;
+    struct ntf_config_entry_t *next;
+} ntf_config_entry_t;
 
-struct nhf_config_t {
-    nhf_config_entry_t *head;
-    nhf_config_entry_t *tail;
+struct ntf_config_t {
+    ntf_config_entry_t *head;
+    ntf_config_entry_t *tail;
 };
 
-static void nhf_config_append(nhf_config_t *cfg, const char *key, const char *val) {
-    nhf_config_entry_t *e = (nhf_config_entry_t*)calloc(1, sizeof(nhf_config_entry_t));
+static void ntf_config_append(ntf_config_t *cfg, const char *key, const char *val) {
+    ntf_config_entry_t *e = (ntf_config_entry_t*)calloc(1, sizeof(ntf_config_entry_t));
     if (!e || !(e->key = strdup(key)) || !(e->val = strdup(val))) {
-        NHF_LOG("warning: out of memory while parsing config, skipping '%s'", key);
+        NTF_LOG("warning: out of memory while parsing config, skipping '%s'", key);
         if (e) {
             free(e->key);
             free(e->val);
@@ -39,49 +39,34 @@ static void nhf_config_append(nhf_config_t *cfg, const char *key, const char *va
     cfg->tail = e;
 }
 
-static void nhf_config_write_default(void) {
-    mkdir(NHF_CONFIG_DIR, 0755);
+static void ntf_config_write_default(void) {
+    // No shipped 'default' file — the default lives in the code (ntf_default_config) and is
+    // written here whenever the config is missing.
+    mkdir(NTF_CONFIG_DIR, 0755);
 
-    FILE *src = fopen(NHF_CONFIG_DIR "/default", "r");
-    if (!src) {
-        NHF_LOG("warning: no default config template at %s/default (%s); leaving config absent", NHF_CONFIG_DIR_DISP, strerror(errno));
-        return;
-    }
-
-    FILE *dst = fopen(NHF_CONFIG_DIR "/config", "w");
+    FILE *dst = fopen(NTF_CONFIG_DIR "/config", "w");
     if (!dst) {
-        NHF_LOG("warning: could not write default config to %s/config (%s)", NHF_CONFIG_DIR_DISP, strerror(errno));
-        fclose(src);
+        NTF_LOG("warning: could not write default config to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
         return;
     }
-
-    char buf[4096];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), src)) > 0) {
-        if (fwrite(buf, 1, n, dst) != n) {
-            NHF_LOG("warning: could not fully write default config to %s/config", NHF_CONFIG_DIR_DISP);
-            break;
-        }
-    }
-
-    fclose(src);
+    fputs(ntf_default_config, dst);
     fclose(dst);
-    NHF_LOG("wrote default config to %s/config from template", NHF_CONFIG_DIR_DISP);
+    NTF_LOG("wrote built-in default config to %s/config", NTF_CONFIG_DIR_DISP);
 }
 
-nhf_config_t *nhf_config_parse(void) {
-    nhf_config_t *cfg = (nhf_config_t*)calloc(1, sizeof(nhf_config_t));
+ntf_config_t *ntf_config_parse(void) {
+    ntf_config_t *cfg = (ntf_config_t*)calloc(1, sizeof(ntf_config_t));
     if (!cfg)
         return NULL;
 
-    FILE *f = fopen(NHF_CONFIG_DIR "/config", "r");
+    FILE *f = fopen(NTF_CONFIG_DIR "/config", "r");
     if (!f && errno == ENOENT) {
-        NHF_LOG("no config file at %s/config; writing a default one", NHF_CONFIG_DIR_DISP);
-        nhf_config_write_default();
-        f = fopen(NHF_CONFIG_DIR "/config", "r");
+        NTF_LOG("no config file at %s/config; writing a default one", NTF_CONFIG_DIR_DISP);
+        ntf_config_write_default();
+        f = fopen(NTF_CONFIG_DIR "/config", "r");
     }
     if (!f) {
-        NHF_LOG("could not open %s/config (%s); using built-in defaults", NHF_CONFIG_DIR_DISP, strerror(errno));
+        NTF_LOG("could not open %s/config (%s); using built-in defaults", NTF_CONFIG_DIR_DISP, strerror(errno));
         return cfg;
     }
 
@@ -105,17 +90,17 @@ nhf_config_t *nhf_config_parse(void) {
         char *key = strsep(&cur, ":");
         key = strtrim(key);
         if (!key || !*key) {
-            NHF_LOG("warning: %s/config: line %d: expected key, ignoring line", NHF_CONFIG_DIR_DISP, lineno);
+            NTF_LOG("warning: %s/config: line %d: expected key, ignoring line", NTF_CONFIG_DIR_DISP, lineno);
             continue;
         }
         if (!cur) {
-            NHF_LOG("warning: %s/config: line %d: expected ':' after key '%s', ignoring line", NHF_CONFIG_DIR_DISP, lineno, key);
+            NTF_LOG("warning: %s/config: line %d: expected ':' after key '%s', ignoring line", NTF_CONFIG_DIR_DISP, lineno, key);
             continue;
         }
 
         char *val = strtrim(cur);
-        nhf_config_append(cfg, key, val);
-        NHF_LOG("config: %s = %s", key, val);
+        ntf_config_append(cfg, key, val);
+        NTF_LOG("config: %s = %s", key, val);
     }
 
     free(buf);
@@ -123,17 +108,17 @@ nhf_config_t *nhf_config_parse(void) {
     return cfg;
 }
 
-const char *nhf_config_get(nhf_config_t *cfg, const char *key) {
+const char *ntf_config_get(ntf_config_t *cfg, const char *key) {
     if (!cfg)
         return NULL;
-    for (nhf_config_entry_t *e = cfg->head; e; e = e->next)
+    for (ntf_config_entry_t *e = cfg->head; e; e = e->next)
         if (!strcmp(e->key, key))
             return e->val;
     return NULL;
 }
 
-bool nhf_config_bool(nhf_config_t *cfg, const char *key, bool default_value) {
-    const char *val = nhf_config_get(cfg, key);
+bool ntf_config_bool(ntf_config_t *cfg, const char *key, bool default_value) {
+    const char *val = ntf_config_get(cfg, key);
     if (!val || !*val)
         return default_value;
     if (!strcmp(val, "1") || !strcasecmp(val, "true") || !strcasecmp(val, "yes") || !strcasecmp(val, "on"))
@@ -141,12 +126,12 @@ bool nhf_config_bool(nhf_config_t *cfg, const char *key, bool default_value) {
     if (!strcmp(val, "0") || !strcasecmp(val, "false") || !strcasecmp(val, "no") || !strcasecmp(val, "off"))
         return false;
 
-    NHF_LOG("warning: invalid boolean for '%s': '%s'; using default %d", key, val, default_value ? 1 : 0);
+    NTF_LOG("warning: invalid boolean for '%s': '%s'; using default %d", key, val, default_value ? 1 : 0);
     return default_value;
 }
 
-double nhf_config_double(nhf_config_t *cfg, const char *key, double default_value) {
-    const char *val = nhf_config_get(cfg, key);
+double ntf_config_double(ntf_config_t *cfg, const char *key, double default_value) {
+    const char *val = ntf_config_get(cfg, key);
     if (!val || !*val)
         return default_value;
 
@@ -157,19 +142,19 @@ double nhf_config_double(nhf_config_t *cfg, const char *key, double default_valu
     for (const char *p = end; p && *p; p++)
         if (!isspace((unsigned char)*p)) { trailing = true; break; }
     if (errno || end == val || trailing) {
-        NHF_LOG("warning: invalid number for '%s': '%s'; using default %.4f", key, val, default_value);
+        NTF_LOG("warning: invalid number for '%s': '%s'; using default %.4f", key, val, default_value);
         return default_value;
     }
     return parsed;
 }
 
-void nhf_config_free(nhf_config_t *cfg) {
+void ntf_config_free(ntf_config_t *cfg) {
     if (!cfg)
         return;
 
-    nhf_config_entry_t *e = cfg->head;
+    ntf_config_entry_t *e = cfg->head;
     while (e) {
-        nhf_config_entry_t *next = e->next;
+        ntf_config_entry_t *next = e->next;
         free(e->key);
         free(e->val);
         free(e);
@@ -178,21 +163,21 @@ void nhf_config_free(nhf_config_t *cfg) {
     free(cfg);
 }
 
-static nhf_config_t *nhf_global_config(void) {
-    static nhf_config_t *global = NULL;
+static ntf_config_t *ntf_global_config(void) {
+    static ntf_config_t *global = NULL;
     if (!global)
-        global = nhf_config_parse();
+        global = ntf_config_parse();
     return global;
 }
 
-const char *nhf_global_config_get(const char *key) {
-    return nhf_config_get(nhf_global_config(), key);
+const char *ntf_global_config_get(const char *key) {
+    return ntf_config_get(ntf_global_config(), key);
 }
 
-bool nhf_global_config_bool(const char *key, bool default_value) {
-    return nhf_config_bool(nhf_global_config(), key, default_value);
+bool ntf_global_config_bool(const char *key, bool default_value) {
+    return ntf_config_bool(ntf_global_config(), key, default_value);
 }
 
-double nhf_global_config_double(const char *key, double default_value) {
-    return nhf_config_double(nhf_global_config(), key, default_value);
+double ntf_global_config_double(const char *key, double default_value) {
+    return ntf_config_double(ntf_global_config(), key, default_value);
 }

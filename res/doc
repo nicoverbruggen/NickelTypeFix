@@ -1,26 +1,26 @@
-# NickelHintFix
+# NickelTypeFix
 
-Fixes two font-rendering problems in Kobo's reader:
+Fixes several text-rendering problems in Kobo's reader (firmware 4.x). Each fix is independent and
+fails safe — it only engages where its seam exists, and never breaks the device. Nothing is
+written to any device library on disk; a reboot without the mod is stock. Causes + mechanisms are
+in docs/how-it-works.md in the repo.
 
-- "Wobble": some fonts render letters a pixel too high or low, giving an uneven
-  line. NickelHintFix flattens it.
-- Vertical (tategaki) CJK text coming out sideways/misplaced (the marks ー 「」 、。)
-  when "Better typography" is on. NickelHintFix corrects those pages, and leaves
-  horizontal books alone.
+Fixes:
+- Glyph "wobble": some fonts render letters a pixel too high/low; loaded unhinted to flatten it.
+- Vertical (tategaki) CJK text coming out sideways under optimizeLegibility; corrected.
+- Justified kepubs with uneven gaps at sentence boundaries under optimizeLegibility (the main
+  one); fixed in Qt's justifier.
+- Justification skewing around dashes/quotes/ellipses; secondary fix.
 
-Requires firmware 4.21+ (4.x). Does not work on 5.x. See the README for the full
-write-up.
+## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
-## Preferences (KOBOeReader/.adds/nickelhintfix/config)
+- ntf_enabled:1            master switch; 0 = do nothing
+- ntf_no_hinting:1         glyph "wobble" fix; 0 = stock rendering
+- ntf_hinting_allowlist:   comma-separated families to leave hinted, e.g. Georgia, Kobo Nickel
+- ntf_vertfix:1            vertical (tategaki) text fix
+- ntf_justify_kospan:1     justified-kepub boundary fix (the main justify fix)
+- ntf_justify_punct:1      punctuation justification fix
+- ntf_log:1                verbose per-fix log to nickel-type-fix.log
 
-- nhf_enabled:1            master switch; 0 = behaves as if not installed
-- nhf_no_hinting:1         the wobble fix; 0 = stock rendering
-- nhf_hinting_allowlist:   comma-separated font families to leave untouched (keep
-                           their normal hinting), e.g. Georgia, Kobo Nickel
-- nhf_vertfix:1            the vertical-text fix; 0 = off
-
-Changes take effect on reboot.
-
-## Uninstall
-
-Delete KOBOeReader/.adds/nickelhintfix/uninstall and reboot.
+Each fix logs whether it engaged. Changes take effect on reboot. Delete the `uninstall` file and
+reboot to remove.

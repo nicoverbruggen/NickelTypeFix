@@ -1,5 +1,5 @@
-#ifndef NHF_UTIL_H
-#define NHF_UTIL_H
+#ifndef NTF_UTIL_H
+#define NTF_UTIL_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,7 +26,7 @@ __attribute__((unused)) static inline char *strtrim(char *s) {
     return a;
 }
 
-__attribute__((unused)) static inline void nhf_log_file_line(const char *file, int line, const char *fmt, ...) {
+__attribute__((unused)) static inline void ntf_log_file_line(const char *file, int line, const char *fmt, ...) {
     char msg[1024];
     va_list args;
     va_start(args, fmt);
@@ -36,8 +36,8 @@ __attribute__((unused)) static inline void nhf_log_file_line(const char *file, i
 
     nh_log("%s (%s:%d)", msg, file, line);
 
-    mkdir(NHF_CONFIG_DIR, 0755);
-    FILE *f = fopen(NHF_CONFIG_DIR "/nickelhintfix.log", "a");
+    mkdir(NTF_CONFIG_DIR, 0755);
+    FILE *f = fopen(NTF_CONFIG_DIR "/nickel-type-fix.log", "a");
     if (!f)
         return;
 
@@ -49,11 +49,11 @@ __attribute__((unused)) static inline void nhf_log_file_line(const char *file, i
             tm->tm_hour, tm->tm_min, tm->tm_sec);
     }
 
-    fprintf(f, "NickelHintFix: %s (%s:%d)\n", msg, file, line);
+    fprintf(f, "NickelTypeFix: %s (%s:%d)\n", msg, file, line);
     fclose(f);
 }
 
-#define NHF_LOG(fmt, ...) nhf_log_file_line(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define NTF_LOG(fmt, ...) ntf_log_file_line(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 #ifdef __cplusplus
 }

@@ -26,7 +26,7 @@ tar \
     --exclude='*.o' \
     --exclude='*.moc' \
     --exclude=nhplugin.json \
-    --exclude=src/libnickelhintfix.so \
+    --exclude=src/libnickeltypefix.so \
     -czf "${scratch}/source.tgz" .
 
 podman run --rm -i \
@@ -41,8 +41,8 @@ podman run --rm -i \
             CROSS_COMPILE=/tc/arm-nickel-linux-gnueabihf/bin/arm-nickel-linux-gnueabihf- \
             MOC=/tc/arm-nickel-linux-gnueabihf/arm-nickel-linux-gnueabihf/sysroot/usr/bin/moc \
             RCC=/tc/arm-nickel-linux-gnueabihf/arm-nickel-linux-gnueabihf/sysroot/usr/bin/rcc >&2
-        if [ -f KoboRoot.tgz ] && [ -f src/libnickelhintfix.so ]; then
-            tar -czf - KoboRoot.tgz src/libnickelhintfix.so
+        if [ -f KoboRoot.tgz ] && [ -f src/libnickeltypefix.so ]; then
+            tar -czf - KoboRoot.tgz src/libnickeltypefix.so
         fi
     ' sh "$@" < "${scratch}/source.tgz" > "${scratch}/artifacts.tgz"
 
