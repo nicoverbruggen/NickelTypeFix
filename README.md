@@ -17,6 +17,8 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 → corrects Qt's justifier so the boundary space gets its share.
 4. **Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
 → secondary justification fix.
+5. **Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
+→ re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
 
 ## Why was this made?
 
@@ -28,7 +30,9 @@ The point is to keep `optimizeLegibility` (which gets you ligatures, better text
 
 The first fix (glyph wobble) is the standout, and has been my personal pet peeve with Kobo's renderer. This fix is independent of everything below, needs no configuration, and is arguably the biggest single improvement the mod makes. It just works for every font. Yay!
 
-The other fixes, by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering path is turned on. It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
+Fix 5 (reader-font fallback) is also independent: it has nothing to do with `optimizeLegibility` and just runs on its own for kepub books.
+
+The justification and vertical-text fixes (2 to 4), by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering path is turned on. It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
 
     [Reading]
     webkitTextRendering=optimizeLegibility
@@ -84,6 +88,7 @@ first boot — there's no shipped template file). Changes take effect on reboot.
 | `ntf_vertfix` | `1` | Fix 2 (vertical text). |
 | `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification — the main one). |
 | `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
+| `ntf_kepub_fontfix` | `1` | Fix 5 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_log` | `1` | Verbose per-fix logging to `nickel-type-fix.log`. `0` to quieten. |
 
 Each fix logs whether it engaged, so one boot tells the whole story.

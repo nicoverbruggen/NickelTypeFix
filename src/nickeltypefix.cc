@@ -7,6 +7,7 @@
 //   2. Vertical (tategaki)  — CSS override on the live page (libnickel)      [ntf_vertfix]
 //   3. Justify: koboSpan     — in-memory patch, QTextEngine::justify (libQtGui)   [ntf_justify_kospan]
 //   4. Justify: punctuation  — in-memory patch, isInterIdeographExpansionTarget (libQtWebKit) [ntf_justify_punct]
+//   5. Reader-font fallback  — re-apply the reader-font CSS per kepub chapter (libnickel)   [ntf_kepub_fontfix]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1–2 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -71,6 +72,13 @@ ntf_justify_kospan:1
 # Fix 4 - justification around punctuation (em/en dashes, ellipses, curly quotes).
 ntf_justify_punct:1
 
+# Fix 5 - reader-font fallback: in a kepub book, a chapter's text sometimes renders in the system
+# (fallback) font instead of your chosen reading font, because the font was not ready the moment the
+# chapter first drew. This re-applies your reading font on each chapter so the text can't stay stuck on
+# the fallback. It only affects kepub books, and on a chapter that is already correct it does nothing
+# visible. 0 = off.
+ntf_kepub_fontfix:1
+
 # Verbose logging to nickel-type-fix.log (per fix: which lib, match count, bytes). 0 to quieten.
 ntf_log:1
 )CFG";
@@ -129,7 +137,7 @@ static void ntf_hint_write_marker(const char *path, const char *msg) {
 static void ntf_hint_disable_for_safety(const char *reason) {
     if (ntf_hint_disabled) return;
     ntf_hint_disabled = true;
-    NTF_LOG("SAFETY: disabling the hinting fix for this boot: %s", reason ? reason : "unknown");
+    NTF_LOG("Safety: the glyph-wobble fix hit a problem and turned itself off for this boot; other fixes keep running. Reason: %s", reason ? reason : "unknown");
     ntf_hint_write_marker(NTF_CONFIG_DIR "/disabled-by-safety", reason);
     if (!ntf_hint_log_dumped) { ntf_hint_log_dumped = true; nh_dump_log(); }
 }
@@ -158,6 +166,8 @@ static void *ntf_us_view    = nullptr;
 static int   ntf_us_applied = -1;
 
 static bool ntf_vertfix() { return ntf_global_config_bool("ntf_vertfix", true); }
+// Fix 5: reader-font fallback repair (on by default).
+static bool ntf_kepub_fontfix() { return ntf_global_config_bool("ntf_kepub_fontfix", true); }
 
 static void ntf_apply_vertical_css(void *cwv, bool vertical) {
     if (!ntf_cwv_settings || !ntf_setUserStyleSheetUrl) return;
@@ -166,6 +176,42 @@ static void ntf_apply_vertical_css(void *cwv, bool vertical) {
     QUrl url;  // empty clears the user stylesheet
     if (vertical) url = QUrl(QString::fromLatin1(NTF_VERT_CSS_URL));
     ntf_setUserStyleSheetUrl(settings, url);
+}
+
+// ================= FIX 5: reader-font fallback repair (libnickel) =================
+// In a kepub book the reading font is applied as an injected `* { font-family:'<font>' !important; }`
+// rule (KepubBookReader::pageStyleCss -> addCssToHtml) resolved against a QFontDatabase application
+// font. If the font isn't ready the instant a chapter first draws, that chapter renders its text in a
+// substitute (the system fallback) and stays that way on page turns (only a font change or a reopen
+// clears it). This fix re-applies the reader-font rule once per chapter: pageStyleCss rebuilds the rule
+// and KepubBookReader::addCssToHtml removes the old one (QWebFrame::removeCSSRule) and re-adds it, so
+// WebKit re-cascades and re-resolves the font in place. It is the same re-inject the reader itself runs
+// on a font size/family change (applyStyling), minus the repaginate, so it doesn't move the reading
+// position; on an already-correct chapter it renders the identical font, so it is invisible.
+//
+// Arming: WebkitView::addCssToHtml fires when a chapter injects its font CSS (a per-chapter, font-
+// agnostic signal). We arm there and consume on the next WebkitView::setCurrentPage (after the chapter
+// has drawn). Our own re-inject also calls addCssToHtml, so ntf_in_fixonturn suppresses re-arming.
+static void (*real_wv_addCssToHtml)(void *self, QString *css) = nullptr;     // WebkitView::addCssToHtml (arm)
+static void (*real_wv_setCurrentPage)(void *self, int page) = nullptr;       // WebkitView::setCurrentPage (consume)
+static void (*ntf_pageStyleCss)(QString *sret, void *reader, bool arg) = nullptr;   // KepubBookReader::pageStyleCss (QString sret)
+static void (*ntf_kbr_addCssToHtml)(void *reader, QString *css) = nullptr;          // KepubBookReader::addCssToHtml (QString by ptr)
+static void *ntf_kepub_reader = nullptr;            // captured in the KepubBookReader ctor
+static bool ntf_in_fixonturn = false;               // re-entrancy guard around the re-inject
+static bool ntf_chapter_needs_fix = false;          // armed by a chapter's font-CSS injection, consumed on the next setCurrentPage
+static bool ntf_fontfix_logged = false;             // the friendly "fix is active" note, once per book
+
+// Re-apply the reader-font CSS into the live document. Caller must hold ntf_in_fixonturn and have
+// verified the syms. Logs one friendly note per book; per-chapter detail only under verbose logging.
+static void ntf_do_reinject(int page) {
+    QString css;
+    ntf_pageStyleCss(&css, ntf_kepub_reader, false);   // false = do not force the fixed-layout body block
+    (void)page;
+    if (!ntf_fontfix_logged) {
+        ntf_fontfix_logged = true;
+        NTF_LOG("Reader-font fix: re-applying your reading font on each chapter of this book, so the text can't get stuck showing the fallback (system) font.");
+    }
+    ntf_kbr_addCssToHtml(ntf_kepub_reader, &css);
 }
 
 // ================= FIX 3+4: justification (in-memory byte patches) =================
@@ -259,18 +305,18 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
 }
 // Locate + verify every edit in a fix; write them only if all located and verified (both-or-nothing).
 static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
-    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_LOG("justify fix '%s' off (%s:0)", fx->name, fx->cfg_key); return; }
+    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_LOG("Justification fix (%s) is turned off in config; skipping.", fx->name); return; }
     const unsigned char *sites[NTF_MAXP]; bool already[NTF_MAXP];
     for (int i = 0; i < fx->n; i++) {
         const struct ntf_patch_t *p = &fx->patch[i];
         struct ntf_find f = { p->incl, p->excl, p->anchor, p->anchor_len, 0, NULL };
         dl_iterate_phdr(ntf_find_cb, &f);
         NTF_DBG("  [%s] %s: matches=%d", fx->name, p->label, f.total);
-        if (f.total == 0) { NTF_LOG("justify fix '%s' skipped: '%s' pattern not found", fx->name, p->label); return; }
-        if (f.total > 1)  { NTF_LOG("justify fix '%s' skipped: '%s' ambiguous (%d)", fx->name, p->label, f.total); return; }
+        if (f.total == 0) { NTF_LOG("Justification fix (%s) could not attach on this firmware and is sitting out (other fixes are unaffected).", fx->name); return; }
+        if (f.total > 1)  { NTF_LOG("Justification fix (%s) sat out to be safe (its target was not unique on this firmware).", fx->name); return; }
         const unsigned char *site = f.match + p->off; already[i] = false;
         if (memcmp(site, p->repl, (size_t)p->plen) == 0) { NTF_DBG("  [%s] %s already patched", fx->name, p->label); already[i] = true; }
-        else if (memcmp(site, p->orig, (size_t)p->plen) != 0) { NTF_LOG("justify fix '%s' skipped: '%s' unexpected bytes at %p", fx->name, p->label, (const void *)site); return; }
+        else if (memcmp(site, p->orig, (size_t)p->plen) != 0) { NTF_LOG("Justification fix (%s) sat out to be safe (unexpected code at its target on this firmware).", fx->name); return; }
         sites[i] = site;
     }
     int wrote = 0;
@@ -278,12 +324,12 @@ static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
         if (already[i]) continue;
         if (ntf_write(sites[i], fx->patch[i].repl, fx->patch[i].plen)) { wrote++; continue; }
         // write failed mid-fix: restore any site we already patched so the fix stays both-or-nothing
-        NTF_LOG("justify fix '%s' write failed at '%s'; rolling back %d edit(s)", fx->name, fx->patch[i].label, wrote);
+        NTF_LOG("Justification fix (%s) could not be applied and was rolled back cleanly (no change made).", fx->name);
         for (int j = i - 1; j >= 0; j--)
             if (!already[j]) ntf_write(sites[j], fx->patch[j].orig, fx->patch[j].plen);
         return;
     }
-    NTF_LOG("justify fix '%s' APPLIED (%d edit(s))", fx->name, wrote);
+    NTF_LOG("Justification fix (%s) is active.", fx->name);
 }
 
 // ================= startup: remove the superseded standalone mods =================
@@ -313,8 +359,8 @@ static void ntf_remove_superseded(void) {
     };
     for (size_t i = 0; i < sizeof(old_so) / sizeof(old_so[0]); i++) {
         if (access(old_so[i], F_OK) != 0) { NTF_DBG("superseded plugin %s not present (%s)", old_so[i], strerror(errno)); continue; }
-        if (unlink(old_so[i]) == 0) NTF_LOG("removed superseded plugin %s", old_so[i]);
-        else NTF_LOG("warning: could not remove superseded plugin %s (%s)", old_so[i], strerror(errno));
+        if (unlink(old_so[i]) == 0) NTF_LOG("Removed an older mod this one replaces: %s", old_so[i]);
+        else NTF_LOG("Note: could not remove an older mod this one replaces (%s): %s", old_so[i], strerror(errno));
     }
     static const char *old_dir[] = {
         "/mnt/onboard/.adds/nickelhintfix", "/mnt/onboard/.adds/nickeljustifyfix",
@@ -322,8 +368,8 @@ static void ntf_remove_superseded(void) {
     for (size_t i = 0; i < sizeof(old_dir) / sizeof(old_dir[0]); i++) {
         if (access(old_dir[i], F_OK) != 0) { NTF_DBG("superseded config dir %s not present (%s)", old_dir[i], strerror(errno)); continue; }
         ntf_rmtree(old_dir[i]);   // best-effort recursive delete; verify the result below
-        if (access(old_dir[i], F_OK) == 0) NTF_LOG("warning: could not fully remove superseded config dir %s", old_dir[i]);
-        else NTF_LOG("removed superseded config dir %s", old_dir[i]);
+        if (access(old_dir[i], F_OK) == 0) NTF_LOG("Note: could not fully remove an older mod's settings folder: %s", old_dir[i]);
+        else NTF_LOG("Removed an older mod's settings folder: %s", old_dir[i]);
     }
 }
 
@@ -336,24 +382,26 @@ static int ntf_init() {
     ntf_global_config_get("");                      // prime config while single-threaded
     if (first_install)
         ntf_remove_superseded();                    // stop the old standalone mods co-loading
-    NTF_LOG("startup: enabled=%d no_hinting=%d vertfix=%d justify_kospan=%d justify_punct=%d log=%d",
-        ntf_enabled(), ntf_no_hinting(), ntf_vertfix(),
-        ntf_global_config_bool("ntf_justify_kospan", true), ntf_global_config_bool("ntf_justify_punct", true), ntf_log());
-    if (!ntf_enabled()) { NTF_LOG("disabled by config; nothing applied"); return 0; }
+    if (!ntf_enabled()) { NTF_LOG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
+    NTF_LOG("NickelTypeFix started. Fixes turned on -> glyph wobble: %s, vertical text: %s, justification: %s, reader font: %s.",
+        ntf_no_hinting() ? "yes" : "no",
+        ntf_vertfix() ? "yes" : "no",
+        (ntf_global_config_bool("ntf_justify_kospan", true) || ntf_global_config_bool("ntf_justify_punct", true)) ? "yes" : "no",
+        ntf_kepub_fontfix() ? "yes" : "no");
 
     // FIX 2 (vertical): learn the vertical-writing-mode enum values from Nickel itself.
-    NTF_LOG("startup: vertical syms cwvSetDir=%p cwvSettings=%p setUserCss=%p kepubCtor=%p wdFromString=%p",
+    NTF_DBG("vertical syms cwvSetDir=%p cwvSettings=%p setUserCss=%p kepubCtor=%p wdFromString=%p",
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
         (void *)real_kepubReaderCtor, (void *)ntf_writingDirectionFromString);
     if (ntf_writingDirectionFromString) {
         ntf_wd_vrl = ntf_writingDirectionFromString(QStringLiteral("vertical-rl"));
         ntf_wd_vlr = ntf_writingDirectionFromString(QStringLiteral("vertical-lr"));
         ntf_vertfix_ready = true;
-        NTF_LOG("startup: vertical-rl=%d vertical-lr=%d", ntf_wd_vrl, ntf_wd_vlr);
+        NTF_DBG("vertical-rl=%d vertical-lr=%d", ntf_wd_vrl, ntf_wd_vlr);
     } else {
-        NTF_LOG("startup: writingDirectionFromString unresolved; vertical fix inert");
+        NTF_LOG("Note: the vertical-text fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     }
-    if (ntf_hint_marker_present()) NTF_LOG("startup: hinting disabled-by-safety marker present; hinting passes through");
+    if (ntf_hint_marker_present()) NTF_LOG("Note: the glyph-wobble fix is off this boot (it disabled itself earlier for safety); other fixes still run.");
 
     // FIX 3+4 (justify): pattern-scan + patch the loaded libs in memory.
     ntf_forceload();
@@ -365,7 +413,7 @@ static int ntf_init() {
 // ================= uninstall / wiring =================
 static bool ntf_del(const char *p) { return (access(p, F_OK) && errno == ENOENT) ? true : nh_delete_file(p); }
 static bool ntf_uninstall() {
-    NTF_LOG("uninstall: removing NickelTypeFix files (in-memory patches revert on next boot)");
+    NTF_LOG("Uninstalling NickelTypeFix: removing its files. The in-memory fixes revert on the next boot.");
     bool ok = true;
     ok = ntf_del(NTF_CONFIG_DIR "/doc") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/config") && ok;
@@ -392,12 +440,20 @@ static struct nh_hook NickelTypeFixHooks[] = {
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "reset per-book state", .optional = true },
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
+    // FIX 5 — reader-font fallback repair: arm on the per-chapter font-CSS injection, re-inject on the
+    // next page-set. Both optional (a missing symbol just sits the fix out).
+    { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
+    { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_setCurrentPage), .desc = "re-apply reader font per chapter", .optional = true },
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
     { .name = "_Z26writingDirectionFromStringRK7QString", .out = nh_symoutptr(ntf_writingDirectionFromString), .desc = "derive vertical enum ints", .optional = true },
     { .name = "_ZNK13CustomWebView8settingsEv", .out = nh_symoutptr(ntf_cwv_settings), .desc = "reach the page's QWebSettings", .optional = true },
     { .name = "_ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl", .out = nh_symoutptr(ntf_setUserStyleSheetUrl), .desc = "set/clear the user stylesheet", .optional = true },
+    { .name = "_ZN15KepubBookReader12pageStyleCssEb", .out = nh_symoutptr(ntf_pageStyleCss), .desc = "fix 5: rebuild reader-font CSS", .optional = true },
+    { .name = "_ZN15KepubBookReader12addCssToHtmlE7QString", .out = nh_symoutptr(ntf_kbr_addCssToHtml), .desc = "fix 5: re-inject reader-font CSS", .optional = true },
     {0},
 };
 
@@ -428,6 +484,9 @@ FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_fla
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
     ntf_us_applied = -1;
+    ntf_kepub_reader = self;       // reader ptr for the Fix 5 re-inject (this = KepubBookReader)
+    ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
+    ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
     if (real_kepubReaderCtor) return real_kepubReaderCtor(self, pluginState, widget);
     return self;
 }
@@ -441,4 +500,32 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
         ntf_us_applied = want;
     }
     if (real_cwv_setWritingDirection) real_cwv_setWritingDirection(self, dir);
+}
+
+// FIX 5 — arm the per-chapter re-inject. WebkitView::addCssToHtml is called when a chapter injects its
+// font CSS (once per chapter load; not on plain page turns), which is our per-chapter, font-agnostic
+// "a fresh chapter drew" signal. Our own re-inject also calls this (via KepubBookReader::addCssToHtml),
+// so ntf_in_fixonturn suppresses re-arming to avoid a loop. `css` is passed by hidden reference; we
+// only read state, never mutate it.
+extern "C" __attribute__((visibility("default")))
+void _ntf_wv_addCssToHtml(void *self, QString *css) {
+    if (ntf_enabled() && ntf_kepub_fontfix() && !ntf_in_fixonturn)
+        ntf_chapter_needs_fix = true;
+    if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
+}
+
+// FIX 5 — consume: on the first setCurrentPage after a chapter drew (armed above), re-apply the
+// reader-font CSS into the live document. If the chapter rendered its text in a substitute because the
+// font was not ready in time, this re-resolves it in place; if the chapter is already correct the
+// re-apply renders the identical font and is invisible.
+extern "C" __attribute__((visibility("default")))
+void _ntf_wv_setCurrentPage(void *self, int page) {
+    if (real_wv_setCurrentPage) real_wv_setCurrentPage(self, page);
+    if (ntf_enabled() && ntf_kepub_fontfix() && ntf_chapter_needs_fix && !ntf_in_fixonturn
+        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_kepub_reader) {
+        ntf_chapter_needs_fix = false;
+        ntf_in_fixonturn = true;
+        ntf_do_reinject(page);
+        ntf_in_fixonturn = false;
+    }
 }
