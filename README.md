@@ -89,9 +89,9 @@ first boot — there's no shipped template file). Changes take effect on reboot.
 | `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification — the main one). |
 | `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
 | `ntf_kepub_fontfix` | `1` | Fix 5 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
-| `ntf_log` | `1` | Verbose per-fix logging to `nickel-type-fix.log`. `0` to quieten. |
+| `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
-Each fix logs whether it engaged, so one boot tells the whole story.
+By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story.
 
 ## Compatibility
 

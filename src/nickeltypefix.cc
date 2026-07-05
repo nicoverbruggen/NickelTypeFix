@@ -40,7 +40,10 @@
 
 // ================= shared config =================
 static bool ntf_enabled() { return ntf_global_config_bool("ntf_enabled", true); }
-static bool ntf_log()     { return ntf_global_config_bool("ntf_log", true); }
+// Verbose logging is OFF by default: a healthy boot writes nothing. NTF_DBG lines (status/info) appear
+// only when ntf_log is on; NTF_LOG (used for problems: a fix that can't apply, a failed write, a safety
+// trip) always writes, so something going wrong is always visible.
+static bool ntf_log()     { return ntf_global_config_bool("ntf_log", false); }
 #define NTF_DBG(...) do { if (ntf_log()) NTF_LOG(__VA_ARGS__); } while (0)
 
 // Built-in default config — written to <config-dir>/config by config.c when it's missing (no
@@ -79,8 +82,9 @@ ntf_justify_punct:1
 # visible. 0 = off.
 ntf_kepub_fontfix:1
 
-# Verbose logging to nickel-type-fix.log (per fix: which lib, match count, bytes). 0 to quieten.
-ntf_log:1
+# Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
+# that can't apply, a failed write, a safety trip) are always logged regardless. 1 = log everything.
+ntf_log:0
 )CFG";
 
 // ================= FIX 1: hinting "wobble" (libkobo / FT_Load_Glyph) =================
@@ -209,7 +213,7 @@ static void ntf_do_reinject(int page) {
     (void)page;
     if (!ntf_fontfix_logged) {
         ntf_fontfix_logged = true;
-        NTF_LOG("Reader-font fix: re-applying your reading font on each chapter of this book, so the text can't get stuck showing the fallback (system) font.");
+        NTF_DBG("Reader-font fix: re-applying your reading font on each chapter of this book, so the text can't get stuck showing the fallback (system) font.");
     }
     ntf_kbr_addCssToHtml(ntf_kepub_reader, &css);
 }
@@ -305,7 +309,7 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
 }
 // Locate + verify every edit in a fix; write them only if all located and verified (both-or-nothing).
 static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
-    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_LOG("Justification fix (%s) is turned off in config; skipping.", fx->name); return; }
+    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_DBG("Justification fix (%s) is turned off in config; skipping.", fx->name); return; }
     const unsigned char *sites[NTF_MAXP]; bool already[NTF_MAXP];
     for (int i = 0; i < fx->n; i++) {
         const struct ntf_patch_t *p = &fx->patch[i];
@@ -329,7 +333,7 @@ static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
             if (!already[j]) ntf_write(sites[j], fx->patch[j].orig, fx->patch[j].plen);
         return;
     }
-    NTF_LOG("Justification fix (%s) is active.", fx->name);
+    NTF_DBG("Justification fix (%s) is active.", fx->name);
 }
 
 // ================= startup: remove the superseded standalone mods =================
@@ -359,7 +363,7 @@ static void ntf_remove_superseded(void) {
     };
     for (size_t i = 0; i < sizeof(old_so) / sizeof(old_so[0]); i++) {
         if (access(old_so[i], F_OK) != 0) { NTF_DBG("superseded plugin %s not present (%s)", old_so[i], strerror(errno)); continue; }
-        if (unlink(old_so[i]) == 0) NTF_LOG("Removed an older mod this one replaces: %s", old_so[i]);
+        if (unlink(old_so[i]) == 0) NTF_DBG("Removed an older mod this one replaces: %s", old_so[i]);
         else NTF_LOG("Note: could not remove an older mod this one replaces (%s): %s", old_so[i], strerror(errno));
     }
     static const char *old_dir[] = {
@@ -369,7 +373,7 @@ static void ntf_remove_superseded(void) {
         if (access(old_dir[i], F_OK) != 0) { NTF_DBG("superseded config dir %s not present (%s)", old_dir[i], strerror(errno)); continue; }
         ntf_rmtree(old_dir[i]);   // best-effort recursive delete; verify the result below
         if (access(old_dir[i], F_OK) == 0) NTF_LOG("Note: could not fully remove an older mod's settings folder: %s", old_dir[i]);
-        else NTF_LOG("Removed an older mod's settings folder: %s", old_dir[i]);
+        else NTF_DBG("Removed an older mod's settings folder: %s", old_dir[i]);
     }
 }
 
@@ -382,8 +386,8 @@ static int ntf_init() {
     ntf_global_config_get("");                      // prime config while single-threaded
     if (first_install)
         ntf_remove_superseded();                    // stop the old standalone mods co-loading
-    if (!ntf_enabled()) { NTF_LOG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
-    NTF_LOG("NickelTypeFix started. Fixes turned on -> glyph wobble: %s, vertical text: %s, justification: %s, reader font: %s.",
+    if (!ntf_enabled()) { NTF_DBG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
+    NTF_DBG("NickelTypeFix started. Fixes turned on -> glyph wobble: %s, vertical text: %s, justification: %s, reader font: %s.",
         ntf_no_hinting() ? "yes" : "no",
         ntf_vertfix() ? "yes" : "no",
         (ntf_global_config_bool("ntf_justify_kospan", true) || ntf_global_config_bool("ntf_justify_punct", true)) ? "yes" : "no",
@@ -413,7 +417,7 @@ static int ntf_init() {
 // ================= uninstall / wiring =================
 static bool ntf_del(const char *p) { return (access(p, F_OK) && errno == ENOENT) ? true : nh_delete_file(p); }
 static bool ntf_uninstall() {
-    NTF_LOG("Uninstalling NickelTypeFix: removing its files. The in-memory fixes revert on the next boot.");
+    NTF_DBG("Uninstalling NickelTypeFix: removing its files. The in-memory fixes revert on the next boot.");
     bool ok = true;
     ok = ntf_del(NTF_CONFIG_DIR "/doc") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/config") && ok;
