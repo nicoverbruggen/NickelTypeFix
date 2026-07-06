@@ -11,6 +11,8 @@ Fixes:
 - Justified kepubs with uneven gaps at sentence boundaries under optimizeLegibility (the main
   one); fixed in Qt's justifier.
 - Justification skewing around dashes/quotes/ellipses; secondary fix.
+- Reader font falling back to the system font in a kepub chapter; the reading font is re-applied
+  on each chapter so a chapter that drew before the font was ready gets corrected in place.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -20,7 +22,8 @@ Fixes:
 - ntf_vertfix:1            vertical (tategaki) text fix
 - ntf_justify_kospan:1     justified-kepub boundary fix (the main justify fix)
 - ntf_justify_punct:1      punctuation justification fix
-- ntf_log:1                verbose per-fix log to nickel-type-fix.log
+- ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
+- ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
-Each fix logs whether it engaged. Changes take effect on reboot. Delete the `uninstall` file and
-reboot to remove.
+A healthy boot logs nothing; problems are always logged regardless. Set ntf_log:1 to also log each
+fix engaging. Changes take effect on reboot. Delete the `uninstall` file and reboot to remove.
