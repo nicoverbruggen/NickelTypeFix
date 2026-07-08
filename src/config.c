@@ -20,6 +20,13 @@ struct ntf_config_t {
     ntf_config_entry_t *tail;
 };
 
+// Set on any config problem (unknown key, malformed line, invalid value); read by ntf_log() so a
+// broken config turns verbose logging on for the whole boot and diagnoses itself in the log.
+static bool ntf_config_problem = false;
+bool ntf_config_problem_seen(void) {
+    return ntf_config_problem;
+}
+
 static void ntf_config_append(ntf_config_t *cfg, const char *key, const char *val) {
     ntf_config_entry_t *e = (ntf_config_entry_t*)calloc(1, sizeof(ntf_config_entry_t));
     if (!e || !(e->key = strdup(key)) || !(e->val = strdup(val))) {
@@ -90,12 +97,22 @@ ntf_config_t *ntf_config_parse(void) {
         char *key = strsep(&cur, ":");
         key = strtrim(key);
         if (!key || !*key) {
+            ntf_config_problem = true;
             NTF_LOG("warning: %s/config: line %d: expected key, ignoring line", NTF_CONFIG_DIR_DISP, lineno);
             continue;
         }
         if (!cur) {
+            ntf_config_problem = true;
             NTF_LOG("warning: %s/config: line %d: expected ':' after key '%s', ignoring line", NTF_CONFIG_DIR_DISP, lineno, key);
             continue;
+        }
+
+        bool known = false;
+        for (size_t i = 0; ntf_known_keys[i]; i++)
+            if (!strcmp(key, ntf_known_keys[i])) { known = true; break; }
+        if (!known) {
+            ntf_config_problem = true;
+            NTF_LOG("warning: %s/config: line %d: unknown setting '%s' (it does nothing — likely a typo; the doc file lists the valid settings)", NTF_CONFIG_DIR_DISP, lineno, key);
         }
 
         char *val = strtrim(cur);
@@ -105,11 +122,12 @@ ntf_config_t *ntf_config_parse(void) {
     free(buf);
     fclose(f);
 
-    // Echo the parsed keys only under verbose logging, so a healthy boot with ntf_log:0 writes
+    // Echo the parsed keys only under verbose logging — or when the config has a problem, so a
+    // broken config always shows what was actually parsed. A healthy boot with ntf_log:0 writes
     // nothing. Read the flag from the config just parsed — NTF_DBG (ntf_global_config_bool) can't
     // be used mid-parse, since the global config is what this function is building and asking for
     // it would recurse into this parser.
-    if (ntf_config_bool(cfg, "ntf_log", false))
+    if (ntf_config_bool(cfg, "ntf_log", false) || ntf_config_problem)
         for (ntf_config_entry_t *e = cfg->head; e; e = e->next)
             NTF_LOG("config: %s = %s", e->key, e->val);
     return cfg;
@@ -133,6 +151,7 @@ bool ntf_config_bool(ntf_config_t *cfg, const char *key, bool default_value) {
     if (!strcmp(val, "0") || !strcasecmp(val, "false") || !strcasecmp(val, "no") || !strcasecmp(val, "off"))
         return false;
 
+    ntf_config_problem = true;
     NTF_LOG("warning: invalid boolean for '%s': '%s'; using default %d", key, val, default_value ? 1 : 0);
     return default_value;
 }

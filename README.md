@@ -91,7 +91,7 @@ first boot — there's no shipped template file). Changes take effect on reboot.
 | `ntf_kepub_fontfix` | `1` | Fix 5 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
-By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story.
+By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.
 
 ## Compatibility
 

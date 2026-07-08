@@ -25,5 +25,7 @@ Fixes:
 - ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
-A healthy boot logs nothing; problems are always logged regardless. Set ntf_log:1 to also log each
+A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config
+file (a misspelled setting, an invalid value) turns full verbose logging on for that boot so it
+diagnoses itself. Set ntf_log:1 to also log each
 fix engaging. Changes take effect on reboot. Delete the `uninstall` file and reboot to remove.

@@ -42,8 +42,10 @@
 static bool ntf_enabled() { return ntf_global_config_bool("ntf_enabled", true); }
 // Verbose logging is OFF by default: a healthy boot writes nothing. NTF_DBG lines (status/info) appear
 // only when ntf_log is on; NTF_LOG (used for problems: a fix that can't apply, a failed write, a safety
-// trip) always writes, so something going wrong is always visible.
-static bool ntf_log()     { return ntf_global_config_bool("ntf_log", false); }
+// trip) always writes, so something going wrong is always visible. A problem in the config itself
+// (unknown key, malformed line, invalid value) forces verbose logging for the boot — a broken config
+// diagnoses itself in the log.
+static bool ntf_log()     { return ntf_config_problem_seen() || ntf_global_config_bool("ntf_log", false); }
 #define NTF_DBG(...) do { if (ntf_log()) NTF_LOG(__VA_ARGS__); } while (0)
 
 // Built-in default config — written to <config-dir>/config by config.c when it's missing (no
@@ -83,9 +85,19 @@ ntf_justify_punct:1
 ntf_kepub_fontfix:1
 
 # Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
-# that can't apply, a failed write, a safety trip) are always logged regardless. 1 = log everything.
+# that can't apply, a failed write, a safety trip) are always logged regardless, and a problem in this
+# file (a misspelled setting, an invalid value) turns verbose logging on automatically for that boot.
+# 1 = log everything.
 ntf_log:0
 )CFG";
+
+// The valid config keys, for the parser's unknown-key warning. Kept directly below the default
+// config above so the two lists can't drift apart: a key added there must be added here.
+extern "C" const char *const ntf_known_keys[] = {
+    "ntf_enabled", "ntf_no_hinting", "ntf_hinting_allowlist", "ntf_vertfix",
+    "ntf_justify_kospan", "ntf_justify_punct", "ntf_kepub_fontfix", "ntf_log",
+    NULL,
+};
 
 // ================= FIX 1: hinting "wobble" (libkobo / FT_Load_Glyph) =================
 // Minimal FreeType shim — only what we touch (face->family_name for the allow-list).
@@ -166,9 +178,6 @@ static void *(*real_kepubReaderCtor)(void *self, void *pluginState, void *widget
 // written by Nickel can be told apart, decoded, merged, and unmerged.
 static const char *const NTF_VERT_RULE   = "*{text-rendering:auto !important}";
 static const char *const NTF_CSS_URL_PFX = "data:text/css;charset=utf-8;base64,";
-// The pure override — NTF_CSS_URL_PFX + base64(NTF_VERT_RULE) — for a slot nothing else uses.
-static const char *const NTF_VERT_CSS_URL =
-    "data:text/css;charset=utf-8;base64,Knt0ZXh0LXJlbmRlcmluZzphdXRvICFpbXBvcnRhbnR9";
 static int  ntf_wd_vrl = -1, ntf_wd_vlr = -1;
 static bool ntf_vertfix_ready = false;
 // The set of CustomWebViews currently in a vertical writing mode (per the setWritingDirection hook).
@@ -236,6 +245,14 @@ static bool ntf_decode_css_url(const QUrl &url, QString *css) {
     return true;
 }
 
+// The pure override (for a slot nothing else uses) as a QUrl — derived from NTF_VERT_RULE through
+// the encoder above, so the rule text is the single source of truth: editing it cannot desync the
+// set sites from the detect/strip sites. Built once, lazily, on the UI thread.
+static const QUrl &ntf_vert_pure_url(void) {
+    static const QUrl url = ntf_encode_css_url(QString::fromLatin1(NTF_VERT_RULE));
+    return url;
+}
+
 // What the view's user-stylesheet slot currently holds. HAS_RULE = our override is in there (alone
 // or merged into other CSS); FOREIGN = content without it (decodable or not); UNKNOWN = the
 // read-back getter isn't available (or no settings object) and callers fall back to the table.
@@ -249,7 +266,7 @@ static ntf_vert_slot_t ntf_vert_slot(void *cwv, QString *css, bool *decodable) {
     QUrl url;
     ntf_getUserStyleSheetUrl(&url, settings);
     if (url.isEmpty()) return NTF_SLOT_EMPTY;
-    if (url == QUrl(QString::fromLatin1(NTF_VERT_CSS_URL))) {   // exact pure override; skip the decode
+    if (url == ntf_vert_pure_url()) {   // exact pure override; skip the decode
         *decodable = true;
         *css = QString::fromLatin1(NTF_VERT_RULE);
         return NTF_SLOT_HAS_RULE;
@@ -595,7 +612,7 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
         ntf_vert_view_track(self, vert);
         if (vert) {
             if (slot == NTF_SLOT_EMPTY) {
-                ntf_vert_set_url(self, QUrl(QString::fromLatin1(NTF_VERT_CSS_URL)));
+                ntf_vert_set_url(self, ntf_vert_pure_url());
             } else if (slot == NTF_SLOT_FOREIGN && decodable) {
                 // The view's own CSS is already in the slot (e.g. the reader injected its font CSS
                 // before the writing mode was known): merge our rule in, keeping theirs intact.
@@ -604,7 +621,7 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
             } else if (slot == NTF_SLOT_FOREIGN) {
                 NTF_DBG("vertical view %p: slot holds CSS in an unrecognized format; leaving it untouched", self);
             } else if (slot == NTF_SLOT_UNKNOWN && !tracked) {
-                ntf_vert_set_url(self, QUrl(QString::fromLatin1(NTF_VERT_CSS_URL)));   // no read-back: old set/clear behavior
+                ntf_vert_set_url(self, ntf_vert_pure_url());   // no read-back: old set/clear behavior
             }
         } else {
             if (slot == NTF_SLOT_HAS_RULE) {
