@@ -41,22 +41,36 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Download artifact
         uses: actions/download-artifact@v6
         with:
           name: NickelTypeFix
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 == "## " tag { found = 1; next }
+            found && /^## /  { exit }
+            found            { print }
+          ' CHANGELOG.md > release-notes.md
+          {
+            echo
+            echo "---"
+            echo
+            echo "**Install:** copy \`KoboRoot.tgz\` to the Kobo's hidden \`.kobo\` folder, eject, and reboot. Settings are in \`.adds/nickel-type-fix/config\` ([configuration reference](https://github.com/$GITHUB_REPOSITORY#configuration))."
+            echo
+            echo "**Requires software version 4.21+ (4.x only; does not work on 5.x).** The vertical-text and justification fixes only matter with \`optimizeLegibility\` enabled; the wobble fix works out of the box. See the [prerequisite section](https://github.com/$GITHUB_REPOSITORY#prerequisite-enable-optimizelegibility)."
+            echo
+            echo "**Uninstall:** delete \`.adds/nickel-type-fix/uninstall\` and reboot. Nothing is ever written to any system library on disk, and a boot failsafe disables the mod automatically if anything goes wrong ([safety details](https://github.com/$GITHUB_REPOSITORY#safety))."
+          } >> release-notes.md
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
           name: NickelTypeFix ${{ github.ref_name }}
-          body: |
-            Fixes several text-rendering defects in the Kobo eReader software (4.x): glyph "wobble" on unhinted fonts, vertical (tategaki) CJK text, and justification — see [what it fixes](https://github.com/${{ github.repository }}#what-it-fixes) for before/after screenshots.
-
-            **Install:** copy `KoboRoot.tgz` to the Kobo's hidden `.kobo` folder, eject, and reboot. Settings are in `.adds/nickel-type-fix/config` ([configuration reference](https://github.com/${{ github.repository }}#configuration)).
-
-            **Requires software version 4.21+ (4.x only — does not work on 5.x).** The vertical-text and justification fixes only matter with `optimizeLegibility` enabled; the wobble fix works out of the box. See the [prerequisite section](https://github.com/${{ github.repository }}#prerequisite-enable-optimizelegibility).
-
-            **Uninstall:** delete `.adds/nickel-type-fix/uninstall` and reboot. Nothing is ever written to any system library on disk, and a boot failsafe disables the mod automatically if anything goes wrong ([safety details](https://github.com/${{ github.repository }}#safety)).
+          body_path: release-notes.md
           files: KoboRoot.tgz
