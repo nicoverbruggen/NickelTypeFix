@@ -155,31 +155,108 @@ static bool ntf_hint_marker_present() {
 static int  (*ntf_writingDirectionFromString)(const QString &) = nullptr;
 static void *(*ntf_cwv_settings)(void *cwv) = nullptr;
 static void (*ntf_setUserStyleSheetUrl)(void *settings, const QUrl &url) = nullptr;
+static void (*ntf_getUserStyleSheetUrl)(QUrl *sret, void *settings) = nullptr;   // QUrl returned via sret
+static void *(*ntf_wv_webView)(void *wv) = nullptr;                              // WebkitView -> its CustomWebView
 static void (*real_cwv_setWritingDirection)(void *self, int dir) = nullptr;
 static void *(*real_kepubReaderCtor)(void *self, void *pluginState, void *widget) = nullptr;
 
-// `*{text-rendering:auto !important}` as a base64 data: URL.
+// The override rule, and the data: URL prefix Nickel itself uses for the user-stylesheet slot
+// (StringUtil::encodeAsUrlData formats "data:%1;charset=utf-8;base64,%2", %1 = text/css — verified
+// in the firmware disassembly). We speak the exact same format, so a slot written by us and one
+// written by Nickel can be told apart, decoded, merged, and unmerged.
+static const char *const NTF_VERT_RULE   = "*{text-rendering:auto !important}";
+static const char *const NTF_CSS_URL_PFX = "data:text/css;charset=utf-8;base64,";
+// The pure override — NTF_CSS_URL_PFX + base64(NTF_VERT_RULE) — for a slot nothing else uses.
 static const char *const NTF_VERT_CSS_URL =
     "data:text/css;charset=utf-8;base64,Knt0ZXh0LXJlbmRlcmluZzphdXRvICFpbXBvcnRhbnR9";
 static int  ntf_wd_vrl = -1, ntf_wd_vlr = -1;
 static bool ntf_vertfix_ready = false;
-// De-dup guard for the user stylesheet: avoid redundant setUserStyleSheetUrl reflows when the same
-// view's writing mode is re-applied. Keyed on the view pointer so a second, distinct CustomWebView
-// (e.g. two live views) isn't mistaken for "already applied" and skipped — see setWritingDirection.
-static void *ntf_us_view    = nullptr;
-static int   ntf_us_applied = -1;
+// The set of CustomWebViews currently in a vertical writing mode (per the setWritingDirection hook).
+//
+// Why this is delicate: the user-stylesheet slot the override lives in is ONE QUrl per view, and it
+// is NOT ours alone. Verified in the firmware disassembly: WebkitView::addCssToHtml ==
+// setUserStyleSheetUrl(settings(), encodeAsUrlData(css, "text/css")) — every WebkitView-derived view
+// (book reader, dictionary, in-app browser, store) stores its own CSS in that same slot, and
+// KepubBookReader::addCssToHtml forwards there too, so even the reader's per-chapter font CSS lands
+// in it. Two consequences:
+//   - never blindly CLEAR a slot: an unconditional clear blanked the dictionary's CSS, rendering the
+//     enlarged dictionary's definition text unreadably small (report 53);
+//   - never blindly SET one either: replacing the slot on the reader's own view wipes the
+//     reading-font CSS, and the next chapter injection wipes our override right back.
+// So the override COEXISTS with the slot's owner instead of competing: CSS injections bound for a
+// vertical view get the rule appended in flight (_ntf_wv_addCssToHtml), and at a writing-direction
+// change the slot is read back (QWebSettings::userStyleSheetUrl) and repaired — set when empty,
+// merged into existing CSS, stripped again when the view goes horizontal. The raw pointers here
+// carry no lifetime info (a destroyed view's address can be recycled by a later one), so what we do
+// to a slot is always decided from the read-back, never from this table alone; the table is also
+// flushed on each book open. If the read-back getter is missing on some firmware, we fall back to
+// plain per-view set/clear keyed on this table.
+#define NTF_VERT_VIEWS_MAX 8
+static void *ntf_vert_views[NTF_VERT_VIEWS_MAX];
+static bool ntf_vert_view_tracked(void *v) {
+    for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (ntf_vert_views[i] == v) return true;
+    return false;
+}
+static void ntf_vert_view_track(void *v, bool on) {
+    if (on) {
+        if (ntf_vert_view_tracked(v)) return;
+        for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (!ntf_vert_views[i]) { ntf_vert_views[i] = v; return; }
+        ntf_vert_views[0] = v;   // table full (never expected in practice): reuse slot 0 rather than
+                                 // grow — the slot read-back repairs an evicted view's slot later
+    } else {
+        for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (ntf_vert_views[i] == v) ntf_vert_views[i] = nullptr;
+    }
+}
+static void ntf_vert_views_flush(void) {
+    for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) ntf_vert_views[i] = nullptr;
+}
 
 static bool ntf_vertfix() { return ntf_global_config_bool("ntf_vertfix", true); }
 // Fix 5: reader-font fallback repair (on by default).
 static bool ntf_kepub_fontfix() { return ntf_global_config_bool("ntf_kepub_fontfix", true); }
 
-static void ntf_apply_vertical_css(void *cwv, bool vertical) {
+static void ntf_vert_set_url(void *cwv, const QUrl &url) {
     if (!ntf_cwv_settings || !ntf_setUserStyleSheetUrl) return;
     void *settings = ntf_cwv_settings(cwv);
     if (!settings) return;
-    QUrl url;  // empty clears the user stylesheet
-    if (vertical) url = QUrl(QString::fromLatin1(NTF_VERT_CSS_URL));
-    ntf_setUserStyleSheetUrl(settings, url);
+    ntf_setUserStyleSheetUrl(settings, url);   // an empty QUrl clears the user stylesheet
+}
+
+// Encode/decode the slot format shared with Nickel (see NTF_CSS_URL_PFX).
+static QUrl ntf_encode_css_url(const QString &css) {
+    QByteArray b64 = css.toUtf8().toBase64();
+    return QUrl(QString::fromLatin1(NTF_CSS_URL_PFX) + QString::fromLatin1(b64.constData(), b64.size()));
+}
+static bool ntf_decode_css_url(const QUrl &url, QString *css) {
+    QString s = url.toString();
+    int comma = s.indexOf(QLatin1Char(','));
+    if (comma < 0 || !s.startsWith(QLatin1String("data:text/css"))
+        || !s.left(comma).contains(QLatin1String(";base64"))) return false;
+    *css = QString::fromUtf8(QByteArray::fromBase64(s.mid(comma + 1).toLatin1()));
+    return true;
+}
+
+// What the view's user-stylesheet slot currently holds. HAS_RULE = our override is in there (alone
+// or merged into other CSS); FOREIGN = content without it (decodable or not); UNKNOWN = the
+// read-back getter isn't available (or no settings object) and callers fall back to the table.
+// On HAS_RULE, and on FOREIGN with *decodable set, *css is the decoded slot content.
+enum ntf_vert_slot_t { NTF_SLOT_UNKNOWN, NTF_SLOT_EMPTY, NTF_SLOT_HAS_RULE, NTF_SLOT_FOREIGN };
+static ntf_vert_slot_t ntf_vert_slot(void *cwv, QString *css, bool *decodable) {
+    *decodable = false;
+    if (!ntf_getUserStyleSheetUrl || !ntf_cwv_settings) return NTF_SLOT_UNKNOWN;
+    void *settings = ntf_cwv_settings(cwv);
+    if (!settings) return NTF_SLOT_UNKNOWN;
+    QUrl url;
+    ntf_getUserStyleSheetUrl(&url, settings);
+    if (url.isEmpty()) return NTF_SLOT_EMPTY;
+    if (url == QUrl(QString::fromLatin1(NTF_VERT_CSS_URL))) {   // exact pure override; skip the decode
+        *decodable = true;
+        *css = QString::fromLatin1(NTF_VERT_RULE);
+        return NTF_SLOT_HAS_RULE;
+    }
+    if (!ntf_decode_css_url(url, css)) return NTF_SLOT_FOREIGN;
+    *decodable = true;
+    return css->contains(QString::fromLatin1(NTF_VERT_RULE)) ? NTF_SLOT_HAS_RULE : NTF_SLOT_FOREIGN;
 }
 
 // ================= FIX 5: reader-font fallback repair (libnickel) =================
@@ -188,8 +265,9 @@ static void ntf_apply_vertical_css(void *cwv, bool vertical) {
 // font. If the font isn't ready the instant a chapter first draws, that chapter renders its text in a
 // substitute (the system fallback) and stays that way on page turns (only a font change or a reopen
 // clears it). This fix re-applies the reader-font rule once per chapter: pageStyleCss rebuilds the rule
-// and KepubBookReader::addCssToHtml removes the old one (QWebFrame::removeCSSRule) and re-adds it, so
-// WebKit re-cascades and re-resolves the font in place. It is the same re-inject the reader itself runs
+// and KepubBookReader::addCssToHtml removes the old frame rule (QWebFrame::removeCSSRule) and re-sets
+// the page's user stylesheet through the base WebkitView::addCssToHtml (verified in the firmware
+// disassembly), so WebKit re-cascades and re-resolves the font in place. It is the same re-inject the reader itself runs
 // on a font size/family change (applyStyling), minus the repaginate, so it doesn't move the reading
 // position; on an already-correct chapter it renders the identical font, so it is invisible.
 //
@@ -394,9 +472,10 @@ static int ntf_init() {
         ntf_kepub_fontfix() ? "yes" : "no");
 
     // FIX 2 (vertical): learn the vertical-writing-mode enum values from Nickel itself.
-    NTF_DBG("vertical syms cwvSetDir=%p cwvSettings=%p setUserCss=%p kepubCtor=%p wdFromString=%p",
+    NTF_DBG("vertical syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p wdFromString=%p",
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
-        (void *)real_kepubReaderCtor, (void *)ntf_writingDirectionFromString);
+        (void *)ntf_getUserStyleSheetUrl, (void *)ntf_wv_webView, (void *)real_kepubReaderCtor,
+        (void *)ntf_writingDirectionFromString);
     if (ntf_writingDirectionFromString) {
         ntf_wd_vrl = ntf_writingDirectionFromString(QStringLiteral("vertical-rl"));
         ntf_wd_vlr = ntf_writingDirectionFromString(QStringLiteral("vertical-lr"));
@@ -440,12 +519,13 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
       .out = nh_symoutptr(real_FT_Load_Glyph), .desc = "load glyphs unhinted", .optional = true },
     // FIX 2 — optional.
-    { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
-      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "reset per-book state", .optional = true },
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
-    // FIX 5 — reader-font fallback repair: arm on the per-chapter font-CSS injection, re-inject on the
-    // next page-set. Both optional (a missing symbol just sits the fix out).
+    // FIX 5 — reader-font fallback repair: the ctor resets per-book state; arm on the per-chapter
+    // font-CSS injection, re-inject on the next page-set. All optional (a missing symbol just sits
+    // the fix out).
+    { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 5: reset per-book state", .optional = true },
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
@@ -456,6 +536,8 @@ static struct nh_dlsym NickelTypeFixDlsym[] = {
     { .name = "_Z26writingDirectionFromStringRK7QString", .out = nh_symoutptr(ntf_writingDirectionFromString), .desc = "derive vertical enum ints", .optional = true },
     { .name = "_ZNK13CustomWebView8settingsEv", .out = nh_symoutptr(ntf_cwv_settings), .desc = "reach the page's QWebSettings", .optional = true },
     { .name = "_ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl", .out = nh_symoutptr(ntf_setUserStyleSheetUrl), .desc = "set/clear the user stylesheet", .optional = true },
+    { .name = "_ZNK12QWebSettings17userStyleSheetUrlEv", .out = nh_symoutptr(ntf_getUserStyleSheetUrl), .desc = "read the slot back before touching it", .optional = true },
+    { .name = "_ZNK10WebkitView7webViewEv", .out = nh_symoutptr(ntf_wv_webView), .desc = "map a WebkitView to its CustomWebView", .optional = true },
     { .name = "_ZN15KepubBookReader12pageStyleCssEb", .out = nh_symoutptr(ntf_pageStyleCss), .desc = "fix 5: rebuild reader-font CSS", .optional = true },
     { .name = "_ZN15KepubBookReader12addCssToHtmlE7QString", .out = nh_symoutptr(ntf_kbr_addCssToHtml), .desc = "fix 5: re-inject reader-font CSS", .optional = true },
     {0},
@@ -483,25 +565,60 @@ FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_fla
     return real_FT_Load_Glyph(face, glyph_index, eff);
 }
 
-// FIX 2 — vertical. Per-book reset, then push/clear the user stylesheet once vertical is known.
-// Independent of the hinting safety state.
+// FIX 5 + FIX 2 — per-book reset: capture the reader pointer for the Fix 5 re-inject, re-arm the
+// chapter font fix, and drop Fix 2's vertical-view tracking (any tracked view is from a previous
+// book; a still-live vertical view is re-tracked at its next setWritingDirection, and dropping a
+// destroyed view's pointer here keeps a recycled address from inheriting its vertical status).
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
-    ntf_us_applied = -1;
     ntf_kepub_reader = self;       // reader ptr for the Fix 5 re-inject (this = KepubBookReader)
     ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
     ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
+    ntf_vert_views_flush();        // Fix 2: stale per-view state must not survive into a new book
     if (real_kepubReaderCtor) return real_kepubReaderCtor(self, pluginState, widget);
     return self;
 }
 extern "C" __attribute__((visibility("default")))
 void _ntf_cwv_setWritingDirection(void *self, int dir) {
     bool vert = ntf_vertfix_ready && (dir == ntf_wd_vrl || dir == ntf_wd_vlr);
-    int want = vert ? 1 : 0;
-    if (self != ntf_us_view) { ntf_us_view = self; ntf_us_applied = -1; }  // new view: state unknown
-    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && want != ntf_us_applied) {
-        ntf_apply_vertical_css(self, vert);
-        ntf_us_applied = want;
+    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready) {
+        // Repair the slot from what it ACTUALLY holds (see ntf_vert_views): set only an empty slot,
+        // merge into (never replace) existing CSS, strip only our own rule. The table is never, by
+        // itself, a reason to clear — a stale entry from a destroyed view whose address got recycled
+        // must not blank the new view's own CSS (rpt 53). Once a view is tracked as vertical, the
+        // injection hook (_ntf_wv_addCssToHtml) keeps the rule present across later slot rewrites.
+        bool tracked = ntf_vert_view_tracked(self);
+        QString css;
+        bool decodable = false;
+        ntf_vert_slot_t slot = ntf_vert_slot(self, &css, &decodable);
+        NTF_DBG("setWritingDirection view=%p dir=%d (vert=%d) tracked=%d slot=%d", self, dir, vert ? 1 : 0, tracked ? 1 : 0, (int)slot);
+        ntf_vert_view_track(self, vert);
+        if (vert) {
+            if (slot == NTF_SLOT_EMPTY) {
+                ntf_vert_set_url(self, QUrl(QString::fromLatin1(NTF_VERT_CSS_URL)));
+            } else if (slot == NTF_SLOT_FOREIGN && decodable) {
+                // The view's own CSS is already in the slot (e.g. the reader injected its font CSS
+                // before the writing mode was known): merge our rule in, keeping theirs intact.
+                NTF_DBG("vertical view %p: merging the text-rendering override into the slot's existing CSS", self);
+                ntf_vert_set_url(self, ntf_encode_css_url(css + QLatin1Char('\n') + QString::fromLatin1(NTF_VERT_RULE)));
+            } else if (slot == NTF_SLOT_FOREIGN) {
+                NTF_DBG("vertical view %p: slot holds CSS in an unrecognized format; leaving it untouched", self);
+            } else if (slot == NTF_SLOT_UNKNOWN && !tracked) {
+                ntf_vert_set_url(self, QUrl(QString::fromLatin1(NTF_VERT_CSS_URL)));   // no read-back: old set/clear behavior
+            }
+        } else {
+            if (slot == NTF_SLOT_HAS_RULE) {
+                // Nickel transiently applies dir=0 (horizontal) on the reader view during every
+                // chapter transition, before the new chapter's writing mode is parsed (observed on
+                // device), so in a vertical book this strip runs once per chapter and the vertical
+                // branch re-merges moments later. Both keep the slot's other CSS intact.
+                css.remove(QString::fromLatin1(NTF_VERT_RULE));
+                css = css.trimmed();
+                ntf_vert_set_url(self, css.isEmpty() ? QUrl() : ntf_encode_css_url(css));
+            } else if (slot == NTF_SLOT_UNKNOWN && tracked) {
+                ntf_vert_set_url(self, QUrl());   // no read-back: old set/clear behavior
+            }
+        }
     }
     if (real_cwv_setWritingDirection) real_cwv_setWritingDirection(self, dir);
 }
@@ -515,6 +632,19 @@ extern "C" __attribute__((visibility("default")))
 void _ntf_wv_addCssToHtml(void *self, QString *css) {
     if (ntf_enabled() && ntf_kepub_fontfix() && !ntf_in_fixonturn)
         ntf_chapter_needs_fix = true;
+    // FIX 2: this call REPLACES the view's whole user-stylesheet slot (it re-encodes `css` as a
+    // data: URL and hands it to setUserStyleSheetUrl — see ntf_vert_views), which would wipe a
+    // previously-set vertical override. If the injection is bound for a view we know is vertical,
+    // carry the override inside the injected CSS so both survive in the one slot. `css` is this
+    // call's own by-value copy (a caller-owned temporary per the ARM C++ ABI), so appending here
+    // only affects this call.
+    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_wv_webView && css) {
+        void *cwv = ntf_wv_webView(self);
+        bool tracked = cwv && ntf_vert_view_tracked(cwv);
+        bool append = tracked && !css->contains(QString::fromLatin1(NTF_VERT_RULE));
+        NTF_DBG("addCssToHtml wv=%p cwv=%p tracked=%d append=%d", self, cwv, tracked ? 1 : 0, append ? 1 : 0);
+        if (append) css->append(QLatin1Char('\n')).append(QString::fromLatin1(NTF_VERT_RULE));
+    }
     if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
 }
 

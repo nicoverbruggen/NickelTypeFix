@@ -100,11 +100,18 @@ ntf_config_t *ntf_config_parse(void) {
 
         char *val = strtrim(cur);
         ntf_config_append(cfg, key, val);
-        NTF_LOG("config: %s = %s", key, val);
     }
 
     free(buf);
     fclose(f);
+
+    // Echo the parsed keys only under verbose logging, so a healthy boot with ntf_log:0 writes
+    // nothing. Read the flag from the config just parsed — NTF_DBG (ntf_global_config_bool) can't
+    // be used mid-parse, since the global config is what this function is building and asking for
+    // it would recurse into this parser.
+    if (ntf_config_bool(cfg, "ntf_log", false))
+        for (ntf_config_entry_t *e = cfg->head; e; e = e->next)
+            NTF_LOG("config: %s = %s", e->key, e->val);
     return cfg;
 }
 
