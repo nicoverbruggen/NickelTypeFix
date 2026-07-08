@@ -78,7 +78,7 @@ Most noticeable: a starved gap at the sentence boundary (`justification   maths.
 ## Configuration
 
 Settings live in `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on
-first boot — there's no shipped template file). Changes take effect on reboot.
+first boot; there's no shipped template file). Changes take effect on reboot.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -86,7 +86,7 @@ first boot — there's no shipped template file). Changes take effect on reboot.
 | `ntf_no_hinting` | `1` | Fix 1 (wobble): load glyphs unhinted. `0` = stock. |
 | `ntf_hinting_allowlist` | *(empty)* | Comma-separated font families to keep natively hinted, e.g. `Georgia, Kobo Nickel`. |
 | `ntf_vertfix` | `1` | Fix 2 (vertical text). |
-| `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification — the main one). |
+| `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification, the main one). |
 | `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
 | `ntf_kepub_fontfix` | `1` | Fix 5 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
@@ -97,7 +97,7 @@ By default the log stays empty on a healthy boot; anything that goes wrong (a fi
 
 Requires Kobo firmware **4.21+ (the 4.x series, which uses Qt 5.2 / QtWebKit / iType)**. 
 
-**It does not work on 5.x (Qt6 / Chromium — no iType, no QtWebKit, and NickelHook doesn't load there).**
+**It does not work on 5.x (Qt6 / Chromium: no iType, no QtWebKit, and NickelHook doesn't load there).**
 
 The mod is not tied to any one model. The two in-memory patches related to justification anchor to position-independent instruction patterns, verified byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour).
 
@@ -136,7 +136,7 @@ Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. The mod sho
 
 ## Uninstall
 
-Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot — NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
+Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
 
 ## Notes
 
@@ -153,7 +153,7 @@ Nothing else is ever removed, and this cleanup does not run on later boots.
 
 ## Development
 
-This repository was created with the assistance of large language models (specifically, Opus 4.8 and GPT 5.5). All of it was carefully reviewed by the author, and tested on the author's actual Kobo devices before release.
+This repository was created with the assistance of large language models (specifically, Claude Opus 4.8, GPT 5.5, and Claude Fable 5). All of it was carefully reviewed by the author, and tested on the author's actual Kobo devices before release.
 
 ## License
 
