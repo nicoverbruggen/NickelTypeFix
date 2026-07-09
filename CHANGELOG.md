@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5
+
+### Improved
+
+- **Safety hardening after an implementation audit:** the reader-font fix now tracks the active reader lifetime and view identity, the hinting safety marker fails closed and is written atomically, and justification patches validate bounds, permissions, writes, and rollback results before remaining active.
+- **Safer installation cleanup:** superseded-mod removal now uses descriptor-relative operations that do not follow symlinks.
+- **Maintainer documentation:** added comments explaining the mod's hooks, firmware assumptions, safety decisions, and future-firmware fallback paths.
+
 ## v0.4
 
 ### Added
