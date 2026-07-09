@@ -9,10 +9,11 @@
 //   4. Justify: punctuation  — in-memory patch, isInterIdeographExpansionTarget (libQtWebKit) [ntf_justify_punct]
 //   5. Reader-font fallback  — re-apply the reader-font CSS per kepub chapter (libnickel)   [ntf_kepub_fontfix]
 //
-// Cause + fix for each is documented in ABOUT.md. Fixes 1–2 use NickelHook PLT hooks;
+// Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 5 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
-// -> mprotect + write + flush icache). On first install (no config file yet) this mod also removes
-// the superseded standalone mods (NickelHintFix, NickelJustifyFix) so they don't co-load.
+// -> bounded permission change -> write -> verify -> flush icache -> restore permissions). On first
+// install (no config file yet) this mod also removes the superseded standalone mods (NickelHintFix,
+// NickelJustifyFix) so they don't co-load.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE          // dl_iterate_phdr / ElfW (guard: gnu++ dialect may predefine it)
@@ -25,6 +26,7 @@
 #include <strings.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <dlfcn.h>
@@ -39,6 +41,9 @@
 #include "util.h"
 
 // ================= shared config =================
+// Return the master switch.  Every hook checks this before changing behavior,
+// so `ntf_enabled:0` is the closest equivalent to removing the plugin without
+// uninstalling it.
 static bool ntf_enabled() { return ntf_global_config_bool("ntf_enabled", true); }
 // Verbose logging is OFF by default: a healthy boot writes nothing. NTF_DBG lines (status/info) appear
 // only when ntf_log is on; NTF_LOG (used for problems: a fix that can't apply, a failed write, a safety
@@ -125,8 +130,13 @@ static FT_Error (*real_FT_Load_Glyph)(FT_Face, FT_UInt, FT_Int32) = nullptr;
 static bool ntf_hint_disabled = false;
 static bool ntf_hint_log_dumped = false;
 
+// Read the Fix 1 switch separately from the master switch so the user can
+// leave the other rendering fixes enabled while restoring stock hinting.
 static bool ntf_no_hinting() { return ntf_global_config_bool("ntf_no_hinting", true); }
 
+// Match the allowlist against FreeType's actual family_name, not a filename or
+// display label.  Matching is case-insensitive and tolerates comma-separated
+// whitespace so the setting remains easy to edit by hand.
 static bool ntf_font_hinting_allowed(FT_Face face) {
     const char *list = ntf_global_config_get("ntf_hinting_allowlist");
     if (!list || !*list) return false;               // common path never touches the FT shim
@@ -144,23 +154,113 @@ static bool ntf_font_hinting_allowed(FT_Face face) {
     return false;
 }
 
-static void ntf_hint_write_marker(const char *path, const char *msg) {
-    mkdir(NTF_CONFIG_DIR, 0755);
-    FILE *f = fopen(path, "w"); if (!f) return;
-    if (msg) fprintf(f, "%s\n", msg);
-    fclose(f);
+// The marker is the persistent circuit breaker for Fix 1.  It is deliberately
+// fail-closed: if the filesystem cannot be inspected, we must not re-enable a
+// fix that already reported a runtime safety problem.
+enum ntf_hint_marker_state_t {
+    NTF_HINT_MARKER_UNKNOWN = -1,
+    NTF_HINT_MARKER_ABSENT = 0,
+    NTF_HINT_MARKER_PRESENT = 1,
+    NTF_HINT_MARKER_UNSAFE = 2,
+};
+static ntf_hint_marker_state_t ntf_hint_marker_cached = NTF_HINT_MARKER_UNKNOWN;
+
+// Read the persistent circuit-breaker state once per boot. Caching avoids a
+// filesystem call on every glyph while still making all later decisions use
+// the same conservative result.
+static ntf_hint_marker_state_t ntf_hint_marker_state(void) {
+    if (ntf_hint_marker_cached != NTF_HINT_MARKER_UNKNOWN) return ntf_hint_marker_cached;
+
+    if (access(NTF_CONFIG_DIR "/disabled-by-safety", F_OK) == 0) {
+        ntf_hint_marker_cached = NTF_HINT_MARKER_PRESENT;
+    } else if (errno == ENOENT) {
+        // ENOENT is the only clean "not disabled" result.  An absent parent
+        // directory also lands here, which is the normal first-install state.
+        ntf_hint_marker_cached = NTF_HINT_MARKER_ABSENT;
+    } else {
+        // EACCES, EIO, and similar errors mean we cannot establish that the
+        // circuit breaker is clear.  Keep hinting disabled for this boot.
+        ntf_hint_marker_cached = NTF_HINT_MARKER_UNSAFE;
+        NTF_LOG("Safety: could not read the glyph-wobble marker; keeping the hinting fix disabled. Reason: %s", strerror(errno));
+    }
+    return ntf_hint_marker_cached;
 }
+
+// Persist the reason for a hinting safety shutdown without ever truncating the
+// existing marker first. The return value distinguishes a durable trip from a
+// boot-local shutdown so callers can report the remaining limitation.
+static bool ntf_hint_write_marker(const char *path, const char *msg) {
+    if (mkdir(NTF_CONFIG_DIR, 0755) != 0 && errno != EEXIST) {
+        NTF_LOG("Safety: could not create the glyph-wobble marker directory: %s", strerror(errno));
+        return false;
+    }
+
+    // Write and flush a uniquely named sibling first, then rename it into
+    // place.  O_EXCL|O_NOFOLLOW prevents a pre-existing symlink from turning
+    // the safety write into an overwrite outside the config directory.
+    char tmp[1024];
+    int n = snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", path, (long)getpid());
+    if (n < 0 || (size_t)n >= sizeof(tmp)) {
+        NTF_LOG("Safety: glyph-wobble marker path is too long");
+        return false;
+    }
+
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        NTF_LOG("Safety: could not open the temporary glyph-wobble marker: %s", strerror(errno));
+        return false;
+    }
+    FILE *f = fdopen(fd, "w");
+    if (!f) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp);
+        NTF_LOG("Safety: could not wrap the temporary glyph-wobble marker: %s", strerror(saved_errno));
+        return false;
+    }
+
+    bool ok = true;
+    if (msg && fprintf(f, "%s\n", msg) < 0) ok = false;
+    if (ok && fflush(f) != 0) ok = false;
+    if (ok && fsync(fileno(f)) != 0) ok = false;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) {
+        NTF_LOG("Safety: could not flush the glyph-wobble marker: %s", strerror(errno));
+        unlink(tmp);
+        return false;
+    }
+
+    if (rename(tmp, path) != 0) {
+        NTF_LOG("Safety: could not install the glyph-wobble marker: %s", strerror(errno));
+        unlink(tmp);
+        return false;
+    }
+
+    // fsync(file) makes the marker contents durable; fsync(directory) makes
+    // the rename durable as well.  If the filesystem cannot guarantee that,
+    // report failure rather than claiming the safety trip will persist.
+    int dir_fd = open(NTF_CONFIG_DIR, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir_fd < 0 || fsync(dir_fd) != 0) {
+        int saved_errno = errno;
+        if (dir_fd >= 0) close(dir_fd);
+        NTF_LOG("Safety: could not sync the glyph-wobble marker directory: %s", strerror(saved_errno));
+        return false;
+    }
+    close(dir_fd);
+    ntf_hint_marker_cached = NTF_HINT_MARKER_PRESENT;
+    return true;
+}
+
+// Disable only Fix 1 after an unexpected FreeType seam failure. The other
+// fixes remain available, and the marker prevents the same hinting path from
+// being retried on the next boot.
 static void ntf_hint_disable_for_safety(const char *reason) {
     if (ntf_hint_disabled) return;
     ntf_hint_disabled = true;
     NTF_LOG("Safety: the glyph-wobble fix hit a problem and turned itself off for this boot; other fixes keep running. Reason: %s", reason ? reason : "unknown");
-    ntf_hint_write_marker(NTF_CONFIG_DIR "/disabled-by-safety", reason);
+    if (!ntf_hint_write_marker(NTF_CONFIG_DIR "/disabled-by-safety", reason))
+        NTF_LOG("Safety: the glyph-wobble fix is disabled only for this boot because its persistent marker could not be saved.");
     if (!ntf_hint_log_dumped) { ntf_hint_log_dumped = true; nh_dump_log(); }
-}
-static bool ntf_hint_marker_present() {
-    static int present = -1;
-    if (present == -1) present = (access(NTF_CONFIG_DIR "/disabled-by-safety", F_OK) == 0) ? 1 : 0;
-    return present == 1;
 }
 
 // ================= FIX 2: vertical (tategaki) text (libnickel) =================
@@ -170,7 +270,9 @@ static void (*ntf_setUserStyleSheetUrl)(void *settings, const QUrl &url) = nullp
 static void (*ntf_getUserStyleSheetUrl)(QUrl *sret, void *settings) = nullptr;   // QUrl returned via sret
 static void *(*ntf_wv_webView)(void *wv) = nullptr;                              // WebkitView -> its CustomWebView
 static void (*real_cwv_setWritingDirection)(void *self, int dir) = nullptr;
-static void *(*real_kepubReaderCtor)(void *self, void *pluginState, void *widget) = nullptr;
+// C1/C2 constructor entry points have a void ABI.  Keeping the function type
+// exact matters even though callers normally ignore the value in r0.
+static void (*real_kepubReaderCtor)(void *self, void *pluginState, void *widget) = nullptr;
 
 // The override rule, and the data: URL prefix Nickel itself uses for the user-stylesheet slot
 // (StringUtil::encodeAsUrlData formats "data:%1;charset=utf-8;base64,%2", %1 = text/css — verified
@@ -202,28 +304,42 @@ static bool ntf_vertfix_ready = false;
 // plain per-view set/clear keyed on this table.
 #define NTF_VERT_VIEWS_MAX 8
 static void *ntf_vert_views[NTF_VERT_VIEWS_MAX];
+// The table stores only CustomWebView identities. CSS contents are read back
+// from each view because object addresses can be recycled after destruction.
 static bool ntf_vert_view_tracked(void *v) {
     for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (ntf_vert_views[i] == v) return true;
     return false;
 }
+// Add or remove one view. A full table leaves the new view untracked instead
+// of evicting a live view whose override would then stop being maintained.
 static void ntf_vert_view_track(void *v, bool on) {
     if (on) {
         if (ntf_vert_view_tracked(v)) return;
         for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (!ntf_vert_views[i]) { ntf_vert_views[i] = v; return; }
-        ntf_vert_views[0] = v;   // table full (never expected in practice): reuse slot 0 rather than
-                                 // grow — the slot read-back repairs an evicted view's slot later
+        // Do not evict a live view: doing so would leave its override installed
+        // but stop maintaining it on the next stylesheet rewrite.  A ninth
+        // simultaneous vertical view is rare; leaving the new one untracked is
+        // safer than corrupting the state of an existing one.
+        NTF_LOG("vertical view table is full; leaving view %p untracked", v);
     } else {
         for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) if (ntf_vert_views[i] == v) ntf_vert_views[i] = nullptr;
     }
 }
+// A new book invalidates all remembered view identities, preventing a recycled
+// address from inheriting the previous book's vertical-writing state.
 static void ntf_vert_views_flush(void) {
     for (int i = 0; i < NTF_VERT_VIEWS_MAX; i++) ntf_vert_views[i] = nullptr;
 }
 
+// Feature accessors keep configuration policy readable at call sites and make
+// the intended default explicit next to each implementation.
 static bool ntf_vertfix() { return ntf_global_config_bool("ntf_vertfix", true); }
 // Fix 5: reader-font fallback repair (on by default).
 static bool ntf_kepub_fontfix() { return ntf_global_config_bool("ntf_kepub_fontfix", true); }
 
+// Update the one user-stylesheet URL slot owned by this CustomWebView. Callers
+// must classify the slot first so this helper does not erase CSS owned by
+// Nickel's reader, dictionary, browser, or store views.
 static void ntf_vert_set_url(void *cwv, const QUrl &url) {
     if (!ntf_cwv_settings || !ntf_setUserStyleSheetUrl) return;
     void *settings = ntf_cwv_settings(cwv);
@@ -232,22 +348,34 @@ static void ntf_vert_set_url(void *cwv, const QUrl &url) {
 }
 
 // Encode/decode the slot format shared with Nickel (see NTF_CSS_URL_PFX).
+// Using Nickel's existing data URL format lets us recognize and merge our rule
+// without introducing a second storage protocol.
 static QUrl ntf_encode_css_url(const QString &css) {
     QByteArray b64 = css.toUtf8().toBase64();
     return QUrl(QString::fromLatin1(NTF_CSS_URL_PFX) + QString::fromLatin1(b64.constData(), b64.size()));
 }
+// Decode only canonical CSS data URLs. Malformed or foreign content is left
+// untouched rather than being replaced with a partial decode.
 static bool ntf_decode_css_url(const QUrl &url, QString *css) {
     QString s = url.toString();
     int comma = s.indexOf(QLatin1Char(','));
     if (comma < 0 || !s.startsWith(QLatin1String("data:text/css"))
         || !s.left(comma).contains(QLatin1String(";base64"))) return false;
-    *css = QString::fromUtf8(QByteArray::fromBase64(s.mid(comma + 1).toLatin1()));
+    QByteArray encoded = s.mid(comma + 1).toLatin1();
+    QByteArray decoded = QByteArray::fromBase64(encoded);
+    // Nickel emits canonical base64 without whitespace.  Re-encoding catches
+    // malformed input that Qt's permissive decoder would otherwise accept and
+    // turn into an empty or altered stylesheet.
+    if (!encoded.isEmpty() && decoded.toBase64() != encoded) return false;
+    *css = QString::fromUtf8(decoded);
     return true;
 }
 
 // The pure override (for a slot nothing else uses) as a QUrl — derived from NTF_VERT_RULE through
 // the encoder above, so the rule text is the single source of truth: editing it cannot desync the
 // set sites from the detect/strip sites. Built once, lazily, on the UI thread.
+// This URL is used for exact ownership detection when the slot contains only
+// NickelTypeFix's rule.
 static const QUrl &ntf_vert_pure_url(void) {
     static const QUrl url = ntf_encode_css_url(QString::fromLatin1(NTF_VERT_RULE));
     return url;
@@ -258,6 +386,8 @@ static const QUrl &ntf_vert_pure_url(void) {
 // read-back getter isn't available (or no settings object) and callers fall back to the table.
 // On HAS_RULE, and on FOREIGN with *decodable set, *css is the decoded slot content.
 enum ntf_vert_slot_t { NTF_SLOT_UNKNOWN, NTF_SLOT_EMPTY, NTF_SLOT_HAS_RULE, NTF_SLOT_FOREIGN };
+// Classify the current slot and return its CSS when it is decodable. The
+// caller uses this result to merge or remove only its own rule.
 static ntf_vert_slot_t ntf_vert_slot(void *cwv, QString *css, bool *decodable) {
     *decodable = false;
     if (!ntf_getUserStyleSheetUrl || !ntf_cwv_settings) return NTF_SLOT_UNKNOWN;
@@ -295,22 +425,45 @@ static void (*real_wv_addCssToHtml)(void *self, QString *css) = nullptr;     // 
 static void (*real_wv_setCurrentPage)(void *self, int page) = nullptr;       // WebkitView::setCurrentPage (consume)
 static void (*ntf_pageStyleCss)(QString *sret, void *reader, bool arg) = nullptr;   // KepubBookReader::pageStyleCss (QString sret)
 static void (*ntf_kbr_addCssToHtml)(void *reader, QString *css) = nullptr;          // KepubBookReader::addCssToHtml (QString by ptr)
-static void *ntf_kepub_reader = nullptr;            // captured in the KepubBookReader ctor
+static void (*real_kepubReaderDtor)(void *self) = nullptr;
+// Fix 5 uses a raw pointer because NickelHook exposes C++ objects as opaque
+// addresses.  KepubBookReader is multiple-inherited: on the validated 4.45
+// firmware, WebkitView is the +24-byte subobject, so its hook's `self` is not
+// the complete-object pointer received by the constructor.  The destructor
+// clears both identities before the object can disappear.  If a future ABI
+// changes that offset, Fix 5 simply fails to arm rather than calling a wrong
+// object.
+//
+// Future-firmware fallback: instead of keeping this constant, inspect
+// libnickel's dynamic symbol names for the common `N` in
+// `_ZThn<N>_N15KepubBookReaderD1Ev` and `_ZThn<N>_N10WebkitViewD1Ev`.
+// Requiring exactly one shared adjustment would let Fix 5 discover the
+// subobject offset from the C++ ABI while preserving the same fail-closed
+// behavior.  That ELF-symbol-table parsing is intentionally deferred until a
+// firmware actually changes the layout; the current validated thunk check is
+// simpler and has a smaller failure surface.
+#define NTF_KEPUB_WEBKIT_OFFSET 24
+static void *ntf_kepub_reader = nullptr;
+static void *ntf_kepub_reader_view = nullptr;
+static void (*ntf_kepubReaderWebkitDtorThunk)(void *self) = nullptr;
+static void *ntf_chapter_view = nullptr;            // view that armed the pending chapter repair
 static bool ntf_in_fixonturn = false;               // re-entrancy guard around the re-inject
-static bool ntf_chapter_needs_fix = false;          // armed by a chapter's font-CSS injection, consumed on the next setCurrentPage
+static bool ntf_chapter_needs_fix = false;          // armed by a reader CSS injection, consumed by that view
 static bool ntf_fontfix_logged = false;             // the friendly "fix is active" note, once per book
 
 // Re-apply the reader-font CSS into the live document. Caller must hold ntf_in_fixonturn and have
 // verified the syms. Logs one friendly note per book; per-chapter detail only under verbose logging.
-static void ntf_do_reinject(int page) {
+// `reader` is the complete KepubBookReader object; the WebkitView hook's `self`
+// is only the +24 base subobject on the supported firmware.
+static void ntf_do_reinject(void *reader, int page) {
     QString css;
-    ntf_pageStyleCss(&css, ntf_kepub_reader, false);   // false = do not force the fixed-layout body block
+    ntf_pageStyleCss(&css, reader, false);   // false = do not force the fixed-layout body block
     (void)page;
     if (!ntf_fontfix_logged) {
         ntf_fontfix_logged = true;
         NTF_DBG("Reader-font fix: re-applying your reading font on each chapter of this book, so the text can't get stuck showing the fallback (system) font.");
     }
-    ntf_kbr_addCssToHtml(ntf_kepub_reader, &css);
+    ntf_kbr_addCssToHtml(reader, &css);
 }
 
 // ================= FIX 3+4: justification (in-memory byte patches) =================
@@ -355,14 +508,37 @@ static const struct ntf_fix_t NTF_JUSTIFY_FIXES[] = {
 
 static const unsigned char *ntf_scan(const unsigned char *hay, size_t haylen,
                                      const unsigned char *needle, size_t nlen, int *count) {
+    // Return the first match for patching, but count every match so callers can
+    // reject ambiguous firmware layouts instead of choosing arbitrarily.
     const unsigned char *first = NULL; int c = 0;
     if (haylen >= nlen)
         for (size_t i = 0; i + nlen <= haylen; i++)
             if (hay[i] == needle[0] && memcmp(hay + i, needle, nlen) == 0) { if (!first) first = hay + i; c++; }
     *count = c; return first;
 }
-struct ntf_find { const char *incl, *excl; const unsigned char *needle; int nlen; int total; const unsigned char *match; };
+struct ntf_find {
+    const char *incl, *excl;
+    const unsigned char *needle;
+    int nlen;
+    int total;
+    const unsigned char *match;
+    const unsigned char *segment;
+    size_t segment_len;
+    int segment_prot;
+};
+static int ntf_segment_prot(unsigned flags) {
+    // Translate ELF PT_LOAD flags into the protection mask to restore after a
+    // patch. A writable executable segment is rejected later as unsafe.
+    int prot = 0;
+    if (flags & PF_R) prot |= PROT_READ;
+    if (flags & PF_W) prot |= PROT_WRITE;
+    if (flags & PF_X) prot |= PROT_EXEC;
+    return prot;
+}
 static int ntf_find_cb(struct dl_phdr_info *info, size_t size, void *data) {
+    // Scan only executable PT_LOAD segments of matching libraries. The callback
+    // records the segment metadata alongside the first match so the patch range
+    // can be checked before any pointer arithmetic or write occurs.
     (void)size; struct ntf_find *f = (struct ntf_find *)data;
     const char *name = info->dlpi_name;
     if (!name || !*name) return 0;
@@ -374,11 +550,21 @@ static int ntf_find_cb(struct dl_phdr_info *info, size_t size, void *data) {
         const unsigned char *seg = (const unsigned char *)(info->dlpi_addr + ph->p_vaddr);
         int c = 0;
         const unsigned char *m = ntf_scan(seg, (size_t)ph->p_memsz, f->needle, (size_t)f->nlen, &c);
-        if (c > 0) { if (!f->match) f->match = m; f->total += c; }
+        if (c > 0) {
+            if (!f->match) {
+                f->match = m;
+                f->segment = seg;
+                f->segment_len = (size_t)ph->p_memsz;
+                f->segment_prot = ntf_segment_prot(ph->p_flags);
+            }
+            f->total += c;
+        }
     }
     return 0;
 }
 static void ntf_forceload(void) {
+    // Force-load the Qt libraries whose stripped code may contain the optional
+    // justification targets. RTLD_NOLOAD avoids unnecessary duplicate loads.
     static const char *cands[] = {
         "libQt5WebKit.so.5", "libQtWebKit.so.4", "libQt5Gui.so.5", "libQtGui.so.4",
         "/usr/local/Qt-5.2.1-arm/lib/libQt5WebKit.so.5", "/usr/local/Qt-5.2.1-arm/lib/libQt5Gui.so.5",
@@ -389,64 +575,222 @@ static void ntf_forceload(void) {
         (void)h;
     }
 }
-static bool ntf_write(const unsigned char *site, const unsigned char *repl, int len) {
-    long pg = sysconf(_SC_PAGESIZE); if (pg <= 0) pg = 4096;
-    uintptr_t addr = (uintptr_t)site, page = addr & ~(uintptr_t)(pg - 1);
-    size_t span = (size_t)((addr + (unsigned)len) - page);
-    if (mprotect((void *)page, span, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        NTF_LOG("mprotect(RWX) failed at %p: %s", (void *)page, strerror(errno)); return false;
-    }
-    for (int i = 0; i < len; i++) ((unsigned char *)site)[i] = repl[i];
-    __builtin___clear_cache((char *)site, (char *)site + len);
-    if (mprotect((void *)page, span, PROT_READ | PROT_EXEC) != 0)
-        NTF_LOG("warning: mprotect(R-X) restore failed at %p: %s", (void *)page, strerror(errno));
+// Verify that the entire edit, not just its anchor, belongs to the executable
+// segment that was scanned.  This keeps a future firmware mismatch from making
+// memcmp() or the write walk past the mapped code range.
+static bool ntf_patch_site(const struct ntf_find *f, const struct ntf_patch_t *p,
+                           const unsigned char **site) {
+    if (!f->match || !f->segment || f->segment_len == 0 || p->off < 0 || p->plen <= 0)
+        return false;
+    size_t match_offset = (size_t)(f->match - f->segment);
+    if (match_offset > f->segment_len || (size_t)p->off > f->segment_len - match_offset)
+        return false;
+    size_t site_offset = match_offset + (size_t)p->off;
+    if ((size_t)p->plen > f->segment_len - site_offset)
+        return false;
+    *site = f->match + p->off;
     return true;
 }
+
+// Apply one byte edit while the page is non-executable, then restore the
+// segment's original ELF-derived permissions.  `changed` tells the caller to
+// include this site in rollback even when permission restoration fails after
+// the bytes were written.
+static bool ntf_write(const unsigned char *site, const unsigned char *repl, int len,
+                      int restore_prot, bool *changed) {
+    *changed = false;
+    if (len <= 0 || !(restore_prot & PROT_EXEC) || (restore_prot & PROT_WRITE)) {
+        NTF_LOG("refusing an invalid executable patch request at %p", (const void *)site);
+        return false;
+    }
+
+    long pg = sysconf(_SC_PAGESIZE); if (pg <= 0) pg = 4096;
+    uintptr_t addr = (uintptr_t)site;
+    uintptr_t last = addr + (uintptr_t)len - 1;
+    if (last < addr) {
+        NTF_LOG("executable patch address overflow at %p", (const void *)site);
+        return false;
+    }
+    uintptr_t page = addr - (addr % (uintptr_t)pg);
+    uintptr_t last_page = last - (last % (uintptr_t)pg);
+    if (page != last_page) {
+        // None of the known edits crosses a page.  Refusing this case avoids
+        // changing the permissions of an adjacent mapping with different flags.
+        NTF_LOG("refusing an executable patch that crosses a page at %p", (const void *)site);
+        return false;
+    }
+    size_t span = (size_t)pg;
+
+    // Do not create a writable+executable window.  The patch runs during init,
+    // before the target functions are used, so the page can be non-executable
+    // while its bytes are changed and its instruction cache is flushed.
+    if (mprotect((void *)page, span, PROT_READ | PROT_WRITE) != 0) {
+        NTF_LOG("mprotect(RW) failed at %p: %s", (void *)page, strerror(errno));
+        return false;
+    }
+    for (int i = 0; i < len; i++) ((unsigned char *)site)[i] = repl[i];
+    *changed = true;
+    __builtin___clear_cache((char *)site, (char *)site + len);
+
+    bool bytes_ok = memcmp(site, repl, (size_t)len) == 0;
+    if (!bytes_ok)
+        NTF_LOG("executable patch verification failed at %p", (const void *)site);
+
+    bool restored = mprotect((void *)page, span, restore_prot) == 0;
+    if (!restored)
+        NTF_LOG("mprotect(permission restore) failed at %p: %s", (void *)page, strerror(errno));
+    return bytes_ok && restored;
+}
 // Locate + verify every edit in a fix; write them only if all located and verified (both-or-nothing).
-static void ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
-    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_DBG("Justification fix (%s) is turned off in config; skipping.", fx->name); return; }
-    const unsigned char *sites[NTF_MAXP]; bool already[NTF_MAXP];
+static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
+    if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_DBG("Justification fix (%s) is turned off in config; skipping.", fx->name); return true; }
+    const unsigned char *sites[NTF_MAXP]; int restore_prot[NTF_MAXP]; bool already[NTF_MAXP];
     for (int i = 0; i < fx->n; i++) {
         const struct ntf_patch_t *p = &fx->patch[i];
-        struct ntf_find f = { p->incl, p->excl, p->anchor, p->anchor_len, 0, NULL };
+        struct ntf_find f = { p->incl, p->excl, p->anchor, p->anchor_len, 0, NULL, NULL, 0, 0 };
         dl_iterate_phdr(ntf_find_cb, &f);
         NTF_DBG("  [%s] %s: matches=%d", fx->name, p->label, f.total);
-        if (f.total == 0) { NTF_LOG("Justification fix (%s) could not attach on this firmware and is sitting out (other fixes are unaffected).", fx->name); return; }
-        if (f.total > 1)  { NTF_LOG("Justification fix (%s) sat out to be safe (its target was not unique on this firmware).", fx->name); return; }
-        const unsigned char *site = f.match + p->off; already[i] = false;
-        if (memcmp(site, p->repl, (size_t)p->plen) == 0) { NTF_DBG("  [%s] %s already patched", fx->name, p->label); already[i] = true; }
-        else if (memcmp(site, p->orig, (size_t)p->plen) != 0) { NTF_LOG("Justification fix (%s) sat out to be safe (unexpected code at its target on this firmware).", fx->name); return; }
+        if (f.total == 0) { NTF_LOG("Justification fix (%s) could not attach on this firmware and is sitting out (other fixes are unaffected).", fx->name); return true; }
+        if (f.total > 1)  { NTF_LOG("Justification fix (%s) sat out to be safe (its target was not unique on this firmware).", fx->name); return true; }
+        const unsigned char *site = NULL;
+        if (!ntf_patch_site(&f, p, &site)) {
+            NTF_LOG("Justification fix (%s) sat out to be safe (its patch range is outside the executable segment).", fx->name);
+            return true;
+        }
         sites[i] = site;
+        restore_prot[i] = f.segment_prot;
+        already[i] = false;
+        if (memcmp(site, p->repl, (size_t)p->plen) == 0) { NTF_DBG("  [%s] %s already patched", fx->name, p->label); already[i] = true; }
+        else if (memcmp(site, p->orig, (size_t)p->plen) != 0) { NTF_LOG("Justification fix (%s) sat out to be safe (unexpected code at its target on this firmware).", fx->name); return true; }
     }
-    int wrote = 0;
     for (int i = 0; i < fx->n; i++) {
         if (already[i]) continue;
-        if (ntf_write(sites[i], fx->patch[i].repl, fx->patch[i].plen)) { wrote++; continue; }
-        // write failed mid-fix: restore any site we already patched so the fix stays both-or-nothing
-        NTF_LOG("Justification fix (%s) could not be applied and was rolled back cleanly (no change made).", fx->name);
-        for (int j = i - 1; j >= 0; j--)
-            if (!already[j]) ntf_write(sites[j], fx->patch[j].orig, fx->patch[j].plen);
-        return;
+        bool changed = false;
+        if (ntf_write(sites[i], fx->patch[i].repl, fx->patch[i].plen, restore_prot[i], &changed)) continue;
+
+        // A write can fail after changing bytes (for example, when restoring
+        // page permissions fails), so roll back the current site as well as all
+        // earlier sites.  Never claim a clean rollback unless every restore was
+        // verified and its permissions were restored.
+        bool rollback_ok = true;
+        NTF_LOG("Justification fix (%s) failed while applying; attempting a complete rollback.", fx->name);
+        for (int j = i; j >= 0; j--) {
+            if (already[j] || (j == i && !changed)) continue;
+            bool rollback_changed = false;
+            if (!ntf_write(sites[j], fx->patch[j].orig, fx->patch[j].plen,
+                           restore_prot[j], &rollback_changed))
+                rollback_ok = false;
+        }
+        if (rollback_ok)
+            NTF_LOG("Justification fix (%s) was rolled back cleanly; it is disabled for this boot.", fx->name);
+        else {
+            NTF_LOG("CRITICAL: justification fix (%s) could not verify its rollback; it is disabled and process memory may need NickelHook's boot failsafe.", fx->name);
+            // Returning an error makes NickelHook restore its hooks and keep
+            // this plugin in its failsafe name for the next boot.  Continuing
+            // would leave the process running with an unknown code page.
+            return false;
+        }
+        return true;
     }
     NTF_DBG("Justification fix (%s) is active.", fx->name);
+    return true;
 }
 
 // ================= startup: remove the superseded standalone mods =================
-static void ntf_rmtree(const char *path) {
-    DIR *d = opendir(path);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-            char child[1024]; snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
-            struct stat st;
-            if (!lstat(child, &st) && S_ISDIR(st.st_mode)) ntf_rmtree(child); else unlink(child);
+// Open every path component without following symlinks.  The cleanup only
+// targets hard-coded mod directories, but those directories live on
+// user-writable storage, so path-string recursion would still be racy.
+// The returned descriptor is the trusted starting point for all later openat
+// and unlinkat operations.
+static int ntf_open_dir_path(const char *path) {
+    int fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    const char *p = path;
+    while (*p == '/') p++;
+    while (*p) {
+        char component[256];
+        size_t n = 0;
+        while (p[n] && p[n] != '/') {
+            if (n + 1 >= sizeof(component)) { close(fd); errno = ENAMETOOLONG; return -1; }
+            component[n] = p[n];
+            n++;
         }
-        closedir(d);
+        component[n] = '\0';
+        while (p[n] == '/') n++;
+        int next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0) { close(fd); return -1; }
+        close(fd);
+        fd = next;
+        p += n;
     }
-    rmdir(path);
+    return fd;
+}
+
+// Remove one directory entry using descriptor-relative operations. Directories
+// are opened with O_NOFOLLOW; symlinks and files are deleted as leaves, never
+// traversed. A race can at worst make removal fail, not redirect recursion.
+static bool ntf_rmtree_at(int parent_fd, const char *name) {
+    int dir_fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir_fd < 0) {
+        if (errno == ENOENT) return true;
+        // A non-directory is removed as a leaf; symlinks are never opened as
+        // directories because of O_NOFOLLOW and are removed, not traversed.
+        if (errno == ENOTDIR || errno == ELOOP)
+            return unlinkat(parent_fd, name, 0) == 0 || errno == ENOENT;
+        NTF_LOG("could not open superseded path %s: %s", name, strerror(errno));
+        return false;
+    }
+
+    DIR *dir = fdopendir(dir_fd);
+    if (!dir) { close(dir_fd); return false; }
+    int current_fd = dirfd(dir);
+    bool ok = true;
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        struct stat st;
+        if (fstatat(current_fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+            if (errno != ENOENT) ok = false;
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            if (!ntf_rmtree_at(current_fd, entry->d_name)) ok = false;
+        } else if (unlinkat(current_fd, entry->d_name, 0) != 0 && errno != ENOENT) {
+            ok = false;
+        }
+    }
+    if (closedir(dir) != 0) ok = false;
+    if (!ok) return false;
+    return unlinkat(parent_fd, name, AT_REMOVEDIR) == 0 || errno == ENOENT;
+}
+
+static bool ntf_rmtree(const char *path) {
+    // Open the parent through the no-symlink path walker, then remove the
+    // target by descriptor-relative names so a concurrent rename cannot redirect
+    // recursion outside the intended mod directory.
+    const char *slash = strrchr(path, '/');
+    if (!slash || !slash[1]) return false;
+    char parent[1024];
+    size_t parent_len = (size_t)(slash - path);
+    if (parent_len == 0) parent_len = 1; // path was directly below /
+    if (parent_len >= sizeof(parent)) return false;
+    memcpy(parent, path, parent_len);
+    parent[parent_len] = '\0';
+
+    int parent_fd = ntf_open_dir_path(parent);
+    if (parent_fd < 0) {
+        if (errno == ENOENT) return true;
+        NTF_LOG("could not open superseded directory parent %s: %s", parent, strerror(errno));
+        return false;
+    }
+    bool ok = ntf_rmtree_at(parent_fd, slash + 1);
+    close(parent_fd);
+    return ok;
 }
 static void ntf_remove_superseded(void) {
+    // First-install-only migration: remove the two older standalone plugins so
+    // they cannot co-load and patch the same Nickel process. Every target is
+    // hard-coded and the recursive deletion above never follows symlinks.
     // While our init runs during startup, a co-loaded NickelHook mod has failsafe-renamed itself
     // to <name>.failsafe (it renames back a few seconds later), so unlink that name too or a
     // live superseded mod escapes the one-shot cleanup.
@@ -474,6 +818,10 @@ static void ntf_remove_superseded(void) {
 
 // ================= init =================
 static int ntf_init() {
+    // NickelHook calls this during plugin loading, before a book is opened. It
+    // resolves optional hooks, validates runtime-dependent values, applies the
+    // in-memory patches, and returns an error only when process memory cannot be
+    // proven safe after a failed rollback.
     // First-install detection: the config file is the one first-boot artifact we create ourselves
     // (the doc and uninstall marker ship inside KoboRoot.tgz, so they exist from the very first
     // boot). Check before priming the config, which writes the missing file.
@@ -489,30 +837,54 @@ static int ntf_init() {
         ntf_kepub_fontfix() ? "yes" : "no");
 
     // FIX 2 (vertical): learn the vertical-writing-mode enum values from Nickel itself.
-    NTF_DBG("vertical syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p wdFromString=%p",
+    NTF_DBG("vertical/reader syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p kepubDtor=%p kepubWebkitThunk=%p wdFromString=%p",
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
         (void *)ntf_getUserStyleSheetUrl, (void *)ntf_wv_webView, (void *)real_kepubReaderCtor,
+        (void *)real_kepubReaderDtor, (void *)ntf_kepubReaderWebkitDtorThunk,
         (void *)ntf_writingDirectionFromString);
     if (ntf_writingDirectionFromString) {
         ntf_wd_vrl = ntf_writingDirectionFromString(QStringLiteral("vertical-rl"));
         ntf_wd_vlr = ntf_writingDirectionFromString(QStringLiteral("vertical-lr"));
-        ntf_vertfix_ready = true;
-        NTF_DBG("vertical-rl=%d vertical-lr=%d", ntf_wd_vrl, ntf_wd_vlr);
+        // A failed lookup or a broken firmware parser must not make every
+        // direction look vertical.  We only accept two distinct non-negative
+        // values; the actual enum numbers remain firmware-defined.
+        if (ntf_wd_vrl >= 0 && ntf_wd_vlr >= 0 && ntf_wd_vrl != ntf_wd_vlr) {
+            ntf_vertfix_ready = true;
+            NTF_DBG("vertical-rl=%d vertical-lr=%d", ntf_wd_vrl, ntf_wd_vlr);
+        } else {
+            NTF_LOG("Note: vertical-writing enum values were invalid (%d, %d); the vertical-text fix is sitting out.", ntf_wd_vrl, ntf_wd_vlr);
+        }
     } else {
         NTF_LOG("Note: the vertical-text fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     }
-    if (ntf_hint_marker_present()) NTF_LOG("Note: the glyph-wobble fix is off this boot (it disabled itself earlier for safety); other fixes still run.");
+    ntf_hint_marker_state_t marker = ntf_hint_marker_state();
+    if (marker == NTF_HINT_MARKER_PRESENT) {
+        NTF_LOG("Note: the glyph-wobble fix is off this boot (it disabled itself earlier for safety); other fixes still run.");
+    } else if (marker == NTF_HINT_MARKER_UNSAFE) {
+        // Do not let an unreadable marker turn a previous safety trip back on.
+        ntf_hint_disabled = true;
+        NTF_LOG("Note: the glyph-wobble fix is off this boot because its safety state could not be verified; other fixes still run.");
+    }
 
     // FIX 3+4 (justify): pattern-scan + patch the loaded libs in memory.
     ntf_forceload();
-    for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++)
-        ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i]);
+    for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
+        if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i])) {
+            NTF_LOG("CRITICAL: a justification patch could not be rolled back; failing plugin initialization so NickelHook's boot failsafe can engage.");
+            return -1;
+        }
+    }
     return 0;
 }
 
 // ================= uninstall / wiring =================
+// Delete one known installation artifact while treating an already-missing
+// path as success. NickelHook performs the actual file operation.
 static bool ntf_del(const char *p) { return (access(p, F_OK) && errno == ENOENT) ? true : nh_delete_file(p); }
 static bool ntf_uninstall() {
+    // NickelHook invokes this when the uninstall marker requests removal. The
+    // in-memory patches need no undo step because they disappear with the
+    // process; only on-device plugin files are removed here.
     NTF_DBG("Uninstalling NickelTypeFix: removing its files. The in-memory fixes revert on the next boot.");
     bool ok = true;
     ok = ntf_del(NTF_CONFIG_DIR "/doc") && ok;
@@ -543,6 +915,8 @@ static struct nh_hook NickelTypeFixHooks[] = {
     // the fix out).
     { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 5: reset per-book state", .optional = true },
+    { .sym = "_ZN15KepubBookReaderD1Ev", .sym_new = "_ntf_kepubReaderDtor",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderDtor), .desc = "fix 5: clear destroyed reader state", .optional = true },
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
@@ -557,6 +931,9 @@ static struct nh_dlsym NickelTypeFixDlsym[] = {
     { .name = "_ZNK10WebkitView7webViewEv", .out = nh_symoutptr(ntf_wv_webView), .desc = "map a WebkitView to its CustomWebView", .optional = true },
     { .name = "_ZN15KepubBookReader12pageStyleCssEb", .out = nh_symoutptr(ntf_pageStyleCss), .desc = "fix 5: rebuild reader-font CSS", .optional = true },
     { .name = "_ZN15KepubBookReader12addCssToHtmlE7QString", .out = nh_symoutptr(ntf_kbr_addCssToHtml), .desc = "fix 5: re-inject reader-font CSS", .optional = true },
+    // This ABI thunk is the runtime proof that WebkitView is the +24 subobject
+    // on the firmware being patched.  Without it, Fix 5 stays inert safely.
+    { .name = "_ZThn24_N15KepubBookReaderD1Ev", .out = nh_symoutptr(ntf_kepubReaderWebkitDtorThunk), .desc = "fix 5: validate reader WebkitView subobject offset", .optional = true },
     {0},
 };
 
@@ -573,7 +950,7 @@ NickelHook(
 extern "C" __attribute__((visibility("default")))
 FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_flags) {
     if (!real_FT_Load_Glyph) { ntf_hint_disable_for_safety("real FT_Load_Glyph was NULL"); return 1; }
-    if (ntf_hint_disabled || ntf_hint_marker_present())
+    if (ntf_hint_disabled || ntf_hint_marker_state() != NTF_HINT_MARKER_ABSENT)
         return real_FT_Load_Glyph(face, glyph_index, load_flags);
     // Orthogonal to iType's CSM stem-weighting (Font Weight) — that's set before the load.
     FT_Int32 eff = load_flags;
@@ -587,13 +964,28 @@ FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_fla
 // book; a still-live vertical view is re-tracked at its next setWritingDirection, and dropping a
 // destroyed view's pointer here keeps a recycled address from inheriting its vertical status).
 extern "C" __attribute__((visibility("default")))
-void *_ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
+void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
     ntf_kepub_reader = self;       // reader ptr for the Fix 5 re-inject (this = KepubBookReader)
+    ntf_kepub_reader_view = (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET);
+    ntf_chapter_view = nullptr;
     ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
     ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
     ntf_vert_views_flush();        // Fix 2: stale per-view state must not survive into a new book
-    if (real_kepubReaderCtor) return real_kepubReaderCtor(self, pluginState, widget);
-    return self;
+    if (real_kepubReaderCtor) real_kepubReaderCtor(self, pluginState, widget);
+}
+// The destructor is the lifetime boundary for the opaque reader pointer above.
+// Clearing state before calling Nickel's destructor means no later WebkitView
+// callback can mistake a freed reader for the active book.
+extern "C" __attribute__((visibility("default")))
+void _ntf_kepubReaderDtor(void *self) {
+    if (self == ntf_kepub_reader) {
+        ntf_kepub_reader = nullptr;
+        ntf_kepub_reader_view = nullptr;
+        ntf_chapter_view = nullptr;
+        ntf_chapter_needs_fix = false;
+        ntf_fontfix_logged = false;
+    }
+    if (real_kepubReaderDtor) real_kepubReaderDtor(self);
 }
 extern "C" __attribute__((visibility("default")))
 void _ntf_cwv_setWritingDirection(void *self, int dir) {
@@ -647,8 +1039,14 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
 // only read state, never mutate it.
 extern "C" __attribute__((visibility("default")))
 void _ntf_wv_addCssToHtml(void *self, QString *css) {
-    if (ntf_enabled() && ntf_kepub_fontfix() && !ntf_in_fixonturn)
+    // WebkitView is shared by dictionary/store/browser views.  Only a call on
+    // the current KepubBookReader may arm Fix 5; otherwise a later page change
+    // could route a non-reader event into the reader-font methods.
+    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_kepubReaderWebkitDtorThunk
+        && ntf_kepub_reader_view == self && !ntf_in_fixonturn) {
         ntf_chapter_needs_fix = true;
+        ntf_chapter_view = self;
+    }
     // FIX 2: this call REPLACES the view's whole user-stylesheet slot (it re-encodes `css` as a
     // data: URL and hands it to setUserStyleSheetUrl — see ntf_vert_views), which would wipe a
     // previously-set vertical override. If the injection is bound for a view we know is vertical,
@@ -672,11 +1070,16 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
 extern "C" __attribute__((visibility("default")))
 void _ntf_wv_setCurrentPage(void *self, int page) {
     if (real_wv_setCurrentPage) real_wv_setCurrentPage(self, page);
-    if (ntf_enabled() && ntf_kepub_fontfix() && ntf_chapter_needs_fix && !ntf_in_fixonturn
-        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_kepub_reader) {
+    // Consume only on the same live reader/view that armed the flag.  The
+    // destructor normally clears ntf_kepub_reader; the identity checks also
+    // make a missing destructor hook fail safe by sitting Fix 5 out.
+    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_kepubReaderWebkitDtorThunk && ntf_chapter_needs_fix
+        && self == ntf_chapter_view && self == ntf_kepub_reader_view && !ntf_in_fixonturn
+        && ntf_pageStyleCss && ntf_kbr_addCssToHtml) {
         ntf_chapter_needs_fix = false;
+        ntf_chapter_view = nullptr;
         ntf_in_fixonturn = true;
-        ntf_do_reinject(page);
+        ntf_do_reinject(ntf_kepub_reader, page);
         ntf_in_fixonturn = false;
     }
 }

@@ -121,6 +121,12 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 3. The hinting fix carries a persistent `disabled-by-safety` marker: if `FT_Load_Glyph` is ever unexpectedly unavailable at runtime, it records the marker and passes glyphs through untouched on this and every later boot, leaving the vertical and justification fixes running.
 
+4. The hinting marker is written atomically and an unreadable marker is treated as unsafe, so a storage or permission error cannot silently re-enable a fix that previously tripped its safety shutdown.
+
+5. The reader-font fix tracks the active `KepubBookReader` through its destructor and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
+
+6. Justification patches validate the complete target range, remove execute permission while writing, verify the replacement bytes, restore the original segment permissions, and roll back every site touched if a later step fails.
+
 ## Build
 
 Install Podman/Docker and build with NickelTC:
