@@ -107,7 +107,7 @@ There are two independent layers of protection, so a failure at worst sits a sin
 
 ### Whole-mod boot failsafe
 
-Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`, and only renames it back three seconds *after* Nickel has started successfully. 
+Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`. It starts the three-second rename-back timer only after NickelTypeFix has initialized successfully.
 
 If applying the hooks or the justification patches ever crashes or hangs Nickel during boot, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
 
@@ -123,9 +123,9 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 4. The hinting marker is written atomically and an unreadable marker is treated as unsafe, so a storage or permission error cannot silently re-enable a fix that previously tripped its safety shutdown.
 
-5. The reader-font fix tracks the active `KepubBookReader` through its destructor and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
+5. The reader-font fix publishes a new `KepubBookReader` only after its real constructor completes, tracks it through its destructor, and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
 
-6. Justification patches validate the complete target range, remove execute permission while writing, verify the replacement bytes, restore the original segment permissions, and roll back every site touched if a later step fails.
+6. Justification patches validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
 
 ## Build
 

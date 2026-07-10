@@ -177,9 +177,9 @@ Fixes 3–4 target functions with no exported symbol, so they can't use `nh_hook
 1. **Locates the loaded library** with `dl_iterate_phdr`, matching the object by name (e.g. contains `Gui`, or `WebKit` but not `Widgets`) and taking its executable `PT_LOAD` segment. If the lib isn't mapped yet it is `dlopen`'d first.
 2. **Pattern-scans** that segment for the fix's position-independent **anchor** byte sequence, accumulating matches across all matching objects.
 3. **Verifies** the exact expected original bytes at `match + offset` (and treats an already-patched site as done).
-4. **Writes** the patch: `mprotect` the page(s) to `RWX`, copy the replacement bytes, `__builtin___clear_cache` the range, restore `R-X`.
+4. **Writes** the patch: require the 2- or 4-byte Thumb instruction to be naturally aligned, temporarily add write permission while keeping the page executable, replace it with one atomic store, verify the bytes, flush the instruction cache, and restore the segment's original permissions. Nickel already has several threads at plugin initialization, so keeping execute permission avoids faulting an unrelated function which happens to share the page; the atomic store prevents a partially written instruction from being observed if a target is reached unexpectedly.
 
-A fix's edits are all located and verified before *any* is written (both-or-nothing). Anything unexpected (pattern not found, more than one match, or wrong bytes) makes that fix log and leave the library untouched.
+A fix's edits are all located and verified before *any* is written (both-or-nothing). Anything unexpected (pattern not found, more than one match, or wrong bytes) makes that fix log and leave the library untouched. If a write fails, every changed site is rolled back and verified; an unverifiable rollback invokes the firmware's normal reboot command while NickelHook's boot failsafe is still armed, with the kernel reboot syscall as a fallback.
 
 ## Firmware tolerance & safety
 

@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/reboot.h>
 #include <dlfcn.h>
 #include <link.h>
 
@@ -468,10 +469,11 @@ static void ntf_do_reinject(void *reader, int page) {
 
 // ================= FIX 3+4: justification (in-memory byte patches) =================
 // TIMING: these edits run from ntf_init, which NickelHook calls from its library __constructor
-// as Nickel dlopen()s this plugin at startup — long before any book is opened. The patched
-// functions (QTextEngine::justify, isInterIdeographExpansionTarget) only execute during page
-// layout of an opened book, so no thread is mid-execution in them when we write. That is what
-// makes the non-atomic 2-byte writes safe; keep the patch phase in init if init ordering changes.
+// as Nickel dlopen()s this plugin at startup — long before any book is opened. Nickel already has
+// several threads at this point, so the page remains executable during the short write window:
+// removing execute permission could fault an unrelated function which shares that page. Safety
+// instead comes from patching before the two target layout functions are used, then immediately
+// verifying the bytes, flushing the instruction cache, and restoring the original permissions.
 // koboSpan fix — libQtGui, QTextEngine::justify, two sites (both required, both-or-nothing).
 static const unsigned char KOS_A_ANCHOR[] = { 0x15,0xF8,0x01,0x3C, 0xD8,0x06, 0x40,0xF1,0x9E,0x80, 0x04,0xE0 };
 static const unsigned char KOS_A_ORIG[]   = { 0x40,0xF1,0x9E,0x80 };   // bpl.w -> b.w (skip trim loop)
@@ -575,6 +577,7 @@ static void ntf_forceload(void) {
         (void)h;
     }
 }
+
 // Verify that the entire edit, not just its anchor, belongs to the executable
 // segment that was scanned.  This keeps a future firmware mismatch from making
 // memcmp() or the write walk past the mapped code range.
@@ -592,20 +595,21 @@ static bool ntf_patch_site(const struct ntf_find *f, const struct ntf_patch_t *p
     return true;
 }
 
-// Apply one byte edit while the page is non-executable, then restore the
-// segment's original ELF-derived permissions.  `changed` tells the caller to
+// Apply one byte edit while temporarily adding write permission, then restore
+// the segment's original ELF-derived permissions. `changed` tells the caller to
 // include this site in rollback even when permission restoration fails after
 // the bytes were written.
 static bool ntf_write(const unsigned char *site, const unsigned char *repl, int len,
                       int restore_prot, bool *changed) {
     *changed = false;
-    if (len <= 0 || !(restore_prot & PROT_EXEC) || (restore_prot & PROT_WRITE)) {
+    uintptr_t addr = (uintptr_t)site;
+    if ((len != 2 && len != 4) || addr % (uintptr_t)len != 0
+        || !(restore_prot & PROT_EXEC) || (restore_prot & PROT_WRITE)) {
         NTF_LOG("refusing an invalid executable patch request at %p", (const void *)site);
         return false;
     }
 
     long pg = sysconf(_SC_PAGESIZE); if (pg <= 0) pg = 4096;
-    uintptr_t addr = (uintptr_t)site;
     uintptr_t last = addr + (uintptr_t)len - 1;
     if (last < addr) {
         NTF_LOG("executable patch address overflow at %p", (const void *)site);
@@ -621,14 +625,26 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
     }
     size_t span = (size_t)pg;
 
-    // Do not create a writable+executable window.  The patch runs during init,
-    // before the target functions are used, so the page can be non-executable
-    // while its bytes are changed and its instruction cache is flushed.
-    if (mprotect((void *)page, span, PROT_READ | PROT_WRITE) != 0) {
-        NTF_LOG("mprotect(RW) failed at %p: %s", (void *)page, strerror(errno));
+    // Nickel has other threads by the time this plugin is loaded. Keep the
+    // page executable so an unrelated function sharing it cannot fault while
+    // the target bytes are changed. The target layout functions themselves do
+    // not run until a book is opened, after this init phase has completed.
+    if (mprotect((void *)page, span, restore_prot | PROT_WRITE) != 0) {
+        NTF_LOG("mprotect(write enable) failed at %p: %s", (void *)page, strerror(errno));
         return false;
     }
-    for (int i = 0; i < len; i++) ((unsigned char *)site)[i] = repl[i];
+    // Every current replacement is one naturally aligned Thumb instruction.
+    // A single-copy atomic store prevents another thread from fetching a
+    // partially written instruction if it reaches the target unexpectedly.
+    if (len == 2) {
+        uint16_t value;
+        memcpy(&value, repl, sizeof(value));
+        __atomic_store_n((uint16_t *)site, value, __ATOMIC_RELEASE);
+    } else {
+        uint32_t value;
+        memcpy(&value, repl, sizeof(value));
+        __atomic_store_n((uint32_t *)site, value, __ATOMIC_RELEASE);
+    }
     *changed = true;
     __builtin___clear_cache((char *)site, (char *)site + len);
 
@@ -684,10 +700,7 @@ static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
         if (rollback_ok)
             NTF_LOG("Justification fix (%s) was rolled back cleanly; it is disabled for this boot.", fx->name);
         else {
-            NTF_LOG("CRITICAL: justification fix (%s) could not verify its rollback; it is disabled and process memory may need NickelHook's boot failsafe.", fx->name);
-            // Returning an error makes NickelHook restore its hooks and keep
-            // this plugin in its failsafe name for the next boot.  Continuing
-            // would leave the process running with an unknown code page.
+            NTF_LOG("CRITICAL: justification fix (%s) could not verify its rollback; process memory is unsafe and Nickel must stop while NickelHook's boot failsafe is still armed.", fx->name);
             return false;
         }
         return true;
@@ -826,7 +839,7 @@ static int ntf_init() {
     // (the doc and uninstall marker ship inside KoboRoot.tgz, so they exist from the very first
     // boot). Check before priming the config, which writes the missing file.
     bool first_install = (access(NTF_CONFIG_DIR "/config", F_OK) != 0);
-    ntf_global_config_get("");                      // prime config while single-threaded
+    ntf_global_config_get("");                      // prime config before any hook can read it
     if (first_install)
         ntf_remove_superseded();                    // stop the old standalone mods co-loading
     if (!ntf_enabled()) { NTF_DBG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
@@ -866,12 +879,29 @@ static int ntf_init() {
         NTF_LOG("Note: the glyph-wobble fix is off this boot because its safety state could not be verified; other fixes still run.");
     }
 
-    // FIX 3+4 (justify): pattern-scan + patch the loaded libs in memory.
-    ntf_forceload();
-    for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
-        if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i])) {
-            NTF_LOG("CRITICAL: a justification patch could not be rolled back; failing plugin initialization so NickelHook's boot failsafe can engage.");
-            return -1;
+    // FIX 3+4 (justify): pattern-scan + patch the loaded libs in memory. Avoid
+    // force-loading the targets when both optional patches are disabled.
+    bool justify_enabled = ntf_global_config_bool("ntf_justify_kospan", true)
+        || ntf_global_config_bool("ntf_justify_punct", true);
+    if (justify_enabled) {
+        ntf_forceload();
+        for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
+            if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i])) {
+                // NickelHook's rename-back worker is not created until
+                // ntf_init returns. Reboot instead of returning an error so
+                // the .failsafe name remains in place for the next boot;
+                // do not run destructors against an unknown code page. A plain
+                // process exit is not sufficient because Nickel is not
+                // guaranteed to be supervised and restarted on every firmware.
+                NTF_LOG("CRITICAL: rebooting before the boot failsafe is disarmed.");
+                nh_dump_log();
+                sync();
+                execl("/sbin/reboot", "reboot", (char *)NULL);
+                NTF_LOG("CRITICAL: firmware reboot command failed: %s; trying the kernel reboot syscall.", strerror(errno));
+                if (reboot(RB_AUTOBOOT) != 0)
+                    NTF_LOG("CRITICAL: kernel reboot failed: %s; terminating the unsafe Nickel process.", strerror(errno));
+                _exit(1);
+            }
         }
     }
     return 0;
@@ -959,19 +989,21 @@ FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_fla
     return real_FT_Load_Glyph(face, glyph_index, eff);
 }
 
-// FIX 5 + FIX 2 — per-book reset: capture the reader pointer for the Fix 5 re-inject, re-arm the
-// chapter font fix, and drop Fix 2's vertical-view tracking (any tracked view is from a previous
-// book; a still-live vertical view is re-tracked at its next setWritingDirection, and dropping a
-// destroyed view's pointer here keeps a recycled address from inheriting its vertical status).
+// FIX 5 + FIX 2 — per-book reset. Clear the previous identities before calling Nickel, but do not
+// publish the new reader until its real constructor has completed: a constructor-time WebkitView
+// callback must not be able to re-enter Fix 5 with a partially constructed KepubBookReader.
 extern "C" __attribute__((visibility("default")))
 void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
-    ntf_kepub_reader = self;       // reader ptr for the Fix 5 re-inject (this = KepubBookReader)
-    ntf_kepub_reader_view = (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET);
+    ntf_kepub_reader = nullptr;
+    ntf_kepub_reader_view = nullptr;
     ntf_chapter_view = nullptr;
     ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
     ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
     ntf_vert_views_flush();        // Fix 2: stale per-view state must not survive into a new book
-    if (real_kepubReaderCtor) real_kepubReaderCtor(self, pluginState, widget);
+    if (!real_kepubReaderCtor) return;
+    real_kepubReaderCtor(self, pluginState, widget);
+    ntf_kepub_reader = self;       // complete KepubBookReader; now safe for Fix 5 to call
+    ntf_kepub_reader_view = (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET);
 }
 // The destructor is the lifetime boundary for the opaque reader pointer above.
 // Clearing state before calling Nickel's destructor means no later WebkitView

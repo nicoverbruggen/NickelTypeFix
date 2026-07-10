@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **Safety hardening after an implementation audit:** the reader-font fix now tracks the active reader lifetime and view identity, the hinting safety marker fails closed and is written atomically, and justification patches validate bounds, permissions, writes, and rollback results before remaining active.
+- **Safety hardening after an implementation audit:** the reader-font fix publishes only fully constructed readers and tracks their lifetime and view identity; the hinting safety marker fails closed and is written atomically; and justification patches validate bounds, alignment, permissions, writes, and rollback results, replace instructions atomically while keeping shared code pages executable, and reboot with the boot failsafe armed if process memory cannot be restored safely.
 - **Safer installation cleanup:** superseded-mod removal now uses descriptor-relative operations that do not follow symlinks.
 - **Maintainer documentation:** added comments explaining the mod's hooks, firmware assumptions, safety decisions, and future-firmware fallback paths.
 
