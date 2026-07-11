@@ -603,7 +603,12 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
                       int restore_prot, bool *changed) {
     *changed = false;
     uintptr_t addr = (uintptr_t)site;
-    if ((len != 2 && len != 4) || addr % (uintptr_t)len != 0
+    // Thumb-2 guarantees only halfword alignment, even for 32-bit instructions,
+    // so a 4-byte site may legitimately sit at addr % 4 == 2 (on the validated
+    // 4.6.2 firmware the koboSpan anchor itself starts a 32-bit instruction at
+    // such an address). Requiring word alignment here would make the fix sit
+    // out on firmware builds where the function shifts by a halfword.
+    if ((len != 2 && len != 4) || addr % 2 != 0
         || !(restore_prot & PROT_EXEC) || (restore_prot & PROT_WRITE)) {
         NTF_LOG("refusing an invalid executable patch request at %p", (const void *)site);
         return false;
@@ -617,13 +622,13 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
     }
     uintptr_t page = addr - (addr % (uintptr_t)pg);
     uintptr_t last_page = last - (last % (uintptr_t)pg);
-    if (page != last_page) {
-        // None of the known edits crosses a page.  Refusing this case avoids
-        // changing the permissions of an adjacent mapping with different flags.
-        NTF_LOG("refusing an executable patch that crosses a page at %p", (const void *)site);
-        return false;
-    }
-    size_t span = (size_t)pg;
+    // A halfword-aligned 4-byte edit can straddle a page boundary
+    // (addr % pagesize == pagesize - 2), so the permission change must cover
+    // every page the edit touches. ntf_patch_site has already verified the
+    // whole edit lies inside the one executable PT_LOAD segment that was
+    // scanned, so a second page belongs to the same mapping and gets the same
+    // restore_prot — this never alters an adjacent mapping with other flags.
+    size_t span = (size_t)(last_page - page) + (size_t)pg;
 
     // Nickel has other threads by the time this plugin is loaded. Keep the
     // page executable so an unrelated function sharing it cannot fault while
@@ -633,17 +638,29 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
         NTF_LOG("mprotect(write enable) failed at %p: %s", (void *)page, strerror(errno));
         return false;
     }
-    // Every current replacement is one naturally aligned Thumb instruction.
-    // A single-copy atomic store prevents another thread from fetching a
-    // partially written instruction if it reaches the target unexpectedly.
+    // Use a single-copy atomic store whenever natural alignment allows it, so
+    // another thread cannot fetch a partially written instruction if it
+    // reaches the target unexpectedly. A 4-byte site at addr % 4 == 2 cannot
+    // be stored as one uint32_t (misaligned atomics are UB, and the store
+    // would not be single-copy atomic anyway), so it is split into its two
+    // naturally aligned halfwords. That split is free of instruction tearing
+    // ONLY because of the TIMING invariant above: these writes happen in
+    // ntf_init, before the patched layout functions can run on any thread.
+    // Do not reuse this path for a patch applied after startup.
     if (len == 2) {
         uint16_t value;
         memcpy(&value, repl, sizeof(value));
         __atomic_store_n((uint16_t *)site, value, __ATOMIC_RELEASE);
-    } else {
+    } else if (addr % 4 == 0) {
         uint32_t value;
         memcpy(&value, repl, sizeof(value));
         __atomic_store_n((uint32_t *)site, value, __ATOMIC_RELEASE);
+    } else {
+        uint16_t lo, hi;
+        memcpy(&lo, repl, sizeof(lo));
+        memcpy(&hi, repl + 2, sizeof(hi));
+        __atomic_store_n((uint16_t *)site, lo, __ATOMIC_RELEASE);
+        __atomic_store_n((uint16_t *)(site + 2), hi, __ATOMIC_RELEASE);
     }
     *changed = true;
     __builtin___clear_cache((char *)site, (char *)site + len);
