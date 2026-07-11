@@ -1,10 +1,13 @@
 #include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "config.h"
 #include "util.h"
@@ -48,16 +51,56 @@ static void ntf_config_append(ntf_config_t *cfg, const char *key, const char *va
 
 static void ntf_config_write_default(void) {
     // No shipped 'default' file — the default lives in the code (ntf_default_config) and is
-    // written here whenever the config is missing.
-    mkdir(NTF_CONFIG_DIR, 0755);
+    // written here whenever the config is missing. Write a unique sibling first, flush it, and
+    // rename it into place (the same pattern as the safety marker): the config file's existence
+    // doubles as the not-a-first-install signal, so a power cut mid-write must not be able to
+    // leave a truncated config behind.
+    if (mkdir(NTF_CONFIG_DIR, 0755) != 0 && errno != EEXIST) {
+        NTF_LOG("warning: could not create %s (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        return;
+    }
 
-    FILE *dst = fopen(NTF_CONFIG_DIR "/config", "w");
-    if (!dst) {
+    char tmp[1024];
+    int n = snprintf(tmp, sizeof(tmp), NTF_CONFIG_DIR "/config.tmp.%ld", (long)getpid());
+    if (n < 0 || (size_t)n >= sizeof(tmp)) {
+        NTF_LOG("warning: default config path is too long");
+        return;
+    }
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0) {
         NTF_LOG("warning: could not write default config to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
         return;
     }
-    fputs(ntf_default_config, dst);
-    fclose(dst);
+    FILE *dst = fdopen(fd, "w");
+    if (!dst) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp);
+        NTF_LOG("warning: could not write default config to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(saved_errno));
+        return;
+    }
+
+    bool ok = fputs(ntf_default_config, dst) >= 0;
+    if (ok && fflush(dst) != 0) ok = false;
+    if (ok && fsync(fileno(dst)) != 0) ok = false;
+    if (fclose(dst) != 0) ok = false;
+    if (!ok) {
+        NTF_LOG("warning: could not flush default config to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        unlink(tmp);
+        return;
+    }
+    if (rename(tmp, NTF_CONFIG_DIR "/config") != 0) {
+        NTF_LOG("warning: could not install default config at %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        unlink(tmp);
+        return;
+    }
+    // Best effort: make the rename itself durable. A failure here only means the
+    // default config could vanish on a power cut and be rewritten next boot.
+    int dir_fd = open(NTF_CONFIG_DIR, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
     NTF_LOG("wrote built-in default config to %s/config", NTF_CONFIG_DIR_DISP);
 }
 
@@ -171,11 +214,19 @@ void ntf_config_free(ntf_config_t *cfg) {
     free(cfg);
 }
 
+// The global config is primed from ntf_init before any hook is installed, so
+// hook-thread readers normally see an already-published pointer. pthread_once
+// removes the reliance on that ordering: even a hook that somehow ran first
+// (or a future refactor of init) gets exactly one, fully built config instead
+// of a lazy-init race.
+static ntf_config_t *ntf_global_cfg = NULL;
+static pthread_once_t ntf_global_cfg_once = PTHREAD_ONCE_INIT;
+static void ntf_global_config_init(void) {
+    ntf_global_cfg = ntf_config_parse();
+}
 static ntf_config_t *ntf_global_config(void) {
-    static ntf_config_t *global = NULL;
-    if (!global)
-        global = ntf_config_parse();
-    return global;
+    pthread_once(&ntf_global_cfg_once, ntf_global_config_init);
+    return ntf_global_cfg;
 }
 
 const char *ntf_global_config_get(const char *key) {

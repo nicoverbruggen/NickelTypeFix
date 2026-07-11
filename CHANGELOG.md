@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6
+
+### Fixed
+
+- **Justification patches no longer assume word-aligned instructions** (issue #3): Thumb-2 only guarantees halfword alignment, so on a future firmware build the koboSpan fix could have refused a perfectly valid patch site and sat out. Sites are now accepted at halfword alignment, and a misaligned 4-byte edit is written as two naturally aligned halfword stores (validated against a real firmware image, where the previous check passed only by luck of the build).
+
+### Improved
+
+- **Fixes contain their own failures instead of crashing Nickel:** an out-of-memory error inside the vertical-text or reader-font fix now degrades that one update to stock behavior; a hooked GUI call arriving on an unexpected thread makes the fix sit out with a note in the log; logging and config initialization are thread-safe; and the default config is written atomically, so a power cut during first boot cannot leave a truncated file behind.
+- **Future-firmware resilience:** the reader-font fix can now discover the reader's internal layout on firmware where it differs from the validated one (proven from the C++ ABI at runtime; it stays safely inactive if the proof fails), and a justification site already patched by one of the older standalone mods is now recognized as "already patched" instead of being misreported as "could not attach".
+
 ## v0.5
 
 ### Improved

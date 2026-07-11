@@ -41,8 +41,12 @@ __attribute__((unused)) static inline void ntf_log_file_line(const char *file, i
     if (!f)
         return;
 
+    // localtime_r, not localtime: logging happens on whatever thread hit a
+    // problem (the FT hook runs on Nickel's render threads), and localtime's
+    // shared static buffer is a data race between concurrent callers.
     time_t now = time(NULL);
-    struct tm *tm = localtime(&now);
+    struct tm tmbuf;
+    struct tm *tm = localtime_r(&now, &tmbuf);
     if (tm) {
         fprintf(f, "%04d-%02d-%02d %02d:%02d:%02d ",
             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,

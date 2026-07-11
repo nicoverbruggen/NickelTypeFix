@@ -32,6 +32,7 @@
 #include <sys/reboot.h>
 #include <dlfcn.h>
 #include <link.h>
+#include <pthread.h>
 
 #include <QString>
 #include <QUrl>
@@ -128,6 +129,9 @@ static FT_Error (*real_FT_Load_Glyph)(FT_Face, FT_UInt, FT_Int32) = nullptr;
 
 // Hinting-scoped safety: if the FT path misbehaves, only the hinting fix passes through — the
 // vertical + justify fixes are unaffected. The disabled-by-safety marker persists across boots.
+// Both flags are read and written from whatever threads rasterize glyphs, so
+// all access goes through relaxed atomics (no ordering is needed — each flag
+// is an independent latch).
 static bool ntf_hint_disabled = false;
 static bool ntf_hint_log_dumped = false;
 
@@ -164,27 +168,34 @@ enum ntf_hint_marker_state_t {
     NTF_HINT_MARKER_PRESENT = 1,
     NTF_HINT_MARKER_UNSAFE = 2,
 };
-static ntf_hint_marker_state_t ntf_hint_marker_cached = NTF_HINT_MARKER_UNKNOWN;
+// Stored as int so the cache can be read/written with relaxed atomics: it is
+// primed in ntf_init but also reachable from the FT hook's render threads.
+static int ntf_hint_marker_cached = NTF_HINT_MARKER_UNKNOWN;
 
 // Read the persistent circuit-breaker state once per boot. Caching avoids a
 // filesystem call on every glyph while still making all later decisions use
-// the same conservative result.
+// the same conservative result. Two threads racing the first read both probe
+// the filesystem and store an equally conservative result, so the race is
+// benign by construction.
 static ntf_hint_marker_state_t ntf_hint_marker_state(void) {
-    if (ntf_hint_marker_cached != NTF_HINT_MARKER_UNKNOWN) return ntf_hint_marker_cached;
+    int cached = __atomic_load_n(&ntf_hint_marker_cached, __ATOMIC_RELAXED);
+    if (cached != NTF_HINT_MARKER_UNKNOWN) return (ntf_hint_marker_state_t)cached;
 
+    int state;
     if (access(NTF_CONFIG_DIR "/disabled-by-safety", F_OK) == 0) {
-        ntf_hint_marker_cached = NTF_HINT_MARKER_PRESENT;
+        state = NTF_HINT_MARKER_PRESENT;
     } else if (errno == ENOENT) {
         // ENOENT is the only clean "not disabled" result.  An absent parent
         // directory also lands here, which is the normal first-install state.
-        ntf_hint_marker_cached = NTF_HINT_MARKER_ABSENT;
+        state = NTF_HINT_MARKER_ABSENT;
     } else {
         // EACCES, EIO, and similar errors mean we cannot establish that the
         // circuit breaker is clear.  Keep hinting disabled for this boot.
-        ntf_hint_marker_cached = NTF_HINT_MARKER_UNSAFE;
+        state = NTF_HINT_MARKER_UNSAFE;
         NTF_LOG("Safety: could not read the glyph-wobble marker; keeping the hinting fix disabled. Reason: %s", strerror(errno));
     }
-    return ntf_hint_marker_cached;
+    __atomic_store_n(&ntf_hint_marker_cached, state, __ATOMIC_RELAXED);
+    return (ntf_hint_marker_state_t)state;
 }
 
 // Persist the reason for a hinting safety shutdown without ever truncating the
@@ -248,7 +259,7 @@ static bool ntf_hint_write_marker(const char *path, const char *msg) {
         return false;
     }
     close(dir_fd);
-    ntf_hint_marker_cached = NTF_HINT_MARKER_PRESENT;
+    __atomic_store_n(&ntf_hint_marker_cached, NTF_HINT_MARKER_PRESENT, __ATOMIC_RELAXED);
     return true;
 }
 
@@ -256,12 +267,13 @@ static bool ntf_hint_write_marker(const char *path, const char *msg) {
 // fixes remain available, and the marker prevents the same hinting path from
 // being retried on the next boot.
 static void ntf_hint_disable_for_safety(const char *reason) {
-    if (ntf_hint_disabled) return;
-    ntf_hint_disabled = true;
+    // Atomic exchange doubles as the "first caller wins" gate when several
+    // glyph threads trip the same problem at once.
+    if (__atomic_exchange_n(&ntf_hint_disabled, true, __ATOMIC_RELAXED)) return;
     NTF_LOG("Safety: the glyph-wobble fix hit a problem and turned itself off for this boot; other fixes keep running. Reason: %s", reason ? reason : "unknown");
     if (!ntf_hint_write_marker(NTF_CONFIG_DIR "/disabled-by-safety", reason))
         NTF_LOG("Safety: the glyph-wobble fix is disabled only for this boot because its persistent marker could not be saved.");
-    if (!ntf_hint_log_dumped) { ntf_hint_log_dumped = true; nh_dump_log(); }
+    if (!__atomic_exchange_n(&ntf_hint_log_dumped, true, __ATOMIC_RELAXED)) nh_dump_log();
 }
 
 // ================= FIX 2: vertical (tategaki) text (libnickel) =================
@@ -435,14 +447,13 @@ static void (*real_kepubReaderDtor)(void *self) = nullptr;
 // changes that offset, Fix 5 simply fails to arm rather than calling a wrong
 // object.
 //
-// Future-firmware fallback: instead of keeping this constant, inspect
-// libnickel's dynamic symbol names for the common `N` in
-// `_ZThn<N>_N15KepubBookReaderD1Ev` and `_ZThn<N>_N10WebkitViewD1Ev`.
-// Requiring exactly one shared adjustment would let Fix 5 discover the
-// subobject offset from the C++ ABI while preserving the same fail-closed
-// behavior.  That ELF-symbol-table parsing is intentionally deferred until a
-// firmware actually changes the layout; the current validated thunk check is
-// simpler and has a smaller failure surface.
+// Future-firmware fallback (implemented in ntf_learn_reader_view): when the
+// validated `_ZThn24_` thunk is absent, the offset is learned from the live
+// objects instead of assumed.  Note the originally sketched "exactly one
+// shared adjustment between the KepubBookReader and WebkitView thunk sets"
+// heuristic does NOT work: on the validated firmware KepubBookReader emits
+// destructor thunks at N = 8, 24, 216, 236, and 520 (several non-primary
+// bases), and the set shared with WebkitView is {8, 24} — not unique.
 #define NTF_KEPUB_WEBKIT_OFFSET 24
 static void *ntf_kepub_reader = nullptr;
 static void *ntf_kepub_reader_view = nullptr;
@@ -451,6 +462,27 @@ static void *ntf_chapter_view = nullptr;            // view that armed the pendi
 static bool ntf_in_fixonturn = false;               // re-entrancy guard around the re-inject
 static bool ntf_chapter_needs_fix = false;          // armed by a reader CSS injection, consumed by that view
 static bool ntf_fontfix_logged = false;             // the friendly "fix is active" note, once per book
+
+// GUI-thread guard for the Qt-side hooks. All Fix 2/5 state above is plain
+// (unsynchronized) data whose check-then-use sequences are only race-free
+// because Nickel calls every hooked QWidget-side method on its one GUI thread.
+// That is true today; this guard turns the assumption into a checked one. The
+// first Qt-side hook invocation claims the thread; a call arriving on any
+// other thread makes our logic sit out (the real function still runs), so a
+// future firmware that moved one of these calls to a worker thread degrades to
+// a logged no-op instead of racing on a reader pointer mid-destruction.
+static uintptr_t ntf_qt_thread = 0;   // 0 = unclaimed (pthread_self() is a TCB address on glibc, never 0)
+static bool ntf_qt_thread_warned = false;
+static bool ntf_on_qt_thread(void) {
+    uintptr_t self = (uintptr_t)pthread_self(), expected = 0;
+    if (__atomic_compare_exchange_n(&ntf_qt_thread, &expected, self, false,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+        || expected == self)
+        return true;
+    if (!__atomic_exchange_n(&ntf_qt_thread_warned, true, __ATOMIC_RELAXED))
+        NTF_LOG("Note: a hooked GUI call arrived on an unexpected thread; the affected fix is sitting out (other fixes are unaffected).");
+    return false;
+}
 
 // Re-apply the reader-font CSS into the live document. Caller must hold ntf_in_fixonturn and have
 // verified the syms. Logs one friendly note per book; per-chapter detail only under verbose logging.
@@ -465,6 +497,46 @@ static void ntf_do_reinject(void *reader, int page) {
         NTF_DBG("Reader-font fix: re-applying your reading font on each chapter of this book, so the text can't get stuck showing the fallback (system) font.");
     }
     ntf_kbr_addCssToHtml(reader, &css);
+}
+
+// Future-firmware fallback: called from the WebkitView CSS-injection hook only
+// when the resolve-time `_ZThn24_` thunk was absent (so the +24 layout is not
+// proven for this firmware) and no view has been learned for the live reader
+// yet. `self` is the WebkitView receiving addCssToHtml; it is the reader's own
+// view iff it is a base subobject of the live KepubBookReader. Prove that from
+// the C++ ABI instead of assuming a layout: the candidate offset must have a
+// matching this-adjusting destructor thunk in libnickel, AND that exact thunk
+// must appear in the vtable the candidate subobject actually points at — which
+// ties the offset to this object's dynamic type, not to a lookalike heap
+// neighbour (a different complete object's vtable never contains another
+// class's `_ZThn` destructor thunks). Every failure path leaves Fix 5 inert
+// for the book; this can delay the fix on an unknown firmware but can never
+// aim a call at the wrong object. GUI-thread only (callers hold the guard).
+static bool ntf_learn_reader_view(void *self) {
+    if (!ntf_kepub_reader || !self) return false;
+    uintptr_t base = (uintptr_t)ntf_kepub_reader, cand = (uintptr_t)self;
+    if (cand <= base) return false;                    // offset 0 (primary base) has no thunk to prove it
+    uintptr_t off = cand - base;
+    if (off > 1024 || off % 4 != 0) return false;      // sane single-object layouts only
+    char sym[64];
+    int n = snprintf(sym, sizeof(sym), "_ZThn%u_N15KepubBookReaderD1Ev", (unsigned)off);
+    if (n < 0 || (size_t)n >= sizeof(sym)) return false;
+    static void *libnickel = dlopen("libnickel.so.1.0.0", RTLD_LAZY | RTLD_NOLOAD);
+    if (!libnickel) return false;
+    void *thunk = dlsym(libnickel, sym);
+    if (!thunk) return false;
+    // The destructor sits within the first few virtual slots for every class in
+    // this hierarchy; 12 bounds the scan while staying inside the vtable.
+    void **vtable = *(void ***)self;
+    if (!vtable) return false;
+    for (int i = 0; i < 12; i++) {
+        if (vtable[i] == thunk) {
+            ntf_kepub_reader_view = self;
+            NTF_DBG("Reader-font fix: discovered the reader's view at offset +%u on this firmware.", (unsigned)off);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ================= FIX 3+4: justification (in-memory byte patches) =================
@@ -674,6 +746,30 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
         NTF_LOG("mprotect(permission restore) failed at %p: %s", (void *)page, strerror(errno));
     return bytes_ok && restored;
 }
+// Both KOS anchors overlap their own edit bytes, so a site that already
+// carries the replacement — patched by the superseded standalone
+// NickelJustifyFix running first, or by another instance of this plugin in the
+// same process — no longer matches the primary scan and would be misreported
+// as "could not attach" even though the intended bytes are in place. Rescan
+// with the replacement substituted into the anchor; on a unique match, fill
+// `f` so the caller's normal "already patched" path takes over. (The PUN edit
+// lies outside its anchor, so its already-patched state is caught by the
+// primary scan and this helper declines.)
+static bool ntf_scan_already_patched(const struct ntf_patch_t *p, struct ntf_find *f) {
+    unsigned char patched[32];
+    if (p->anchor_len <= 0 || (size_t)p->anchor_len > sizeof(patched)) return false;
+    if (p->off < 0 || p->plen <= 0 || p->off + p->plen > p->anchor_len) return false;
+    memcpy(patched, p->anchor, (size_t)p->anchor_len);
+    memcpy(patched + p->off, p->repl, (size_t)p->plen);
+    struct ntf_find pf = { p->incl, p->excl, patched, p->anchor_len, 0, NULL, NULL, 0, 0 };
+    dl_iterate_phdr(ntf_find_cb, &pf);
+    if (pf.total != 1) return false;   // an ambiguous patched site is as unsafe as an ambiguous original
+    pf.needle = NULL;                  // `patched` dies with this frame; never expose it
+    pf.nlen = 0;
+    *f = pf;
+    return true;
+}
+
 // Locate + verify every edit in a fix; write them only if all located and verified (both-or-nothing).
 static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
     if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_DBG("Justification fix (%s) is turned off in config; skipping.", fx->name); return true; }
@@ -683,6 +779,8 @@ static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
         struct ntf_find f = { p->incl, p->excl, p->anchor, p->anchor_len, 0, NULL, NULL, 0, 0 };
         dl_iterate_phdr(ntf_find_cb, &f);
         NTF_DBG("  [%s] %s: matches=%d", fx->name, p->label, f.total);
+        if (f.total == 0 && ntf_scan_already_patched(p, &f))
+            NTF_DBG("  [%s] %s: found in already-patched form (applied earlier by this plugin or a superseded mod)", fx->name, p->label);
         if (f.total == 0) { NTF_LOG("Justification fix (%s) could not attach on this firmware and is sitting out (other fixes are unaffected).", fx->name); return true; }
         if (f.total > 1)  { NTF_LOG("Justification fix (%s) sat out to be safe (its target was not unique on this firmware).", fx->name); return true; }
         const unsigned char *site = NULL;
@@ -892,7 +990,7 @@ static int ntf_init() {
         NTF_LOG("Note: the glyph-wobble fix is off this boot (it disabled itself earlier for safety); other fixes still run.");
     } else if (marker == NTF_HINT_MARKER_UNSAFE) {
         // Do not let an unreadable marker turn a previous safety trip back on.
-        ntf_hint_disabled = true;
+        __atomic_store_n(&ntf_hint_disabled, true, __ATOMIC_RELAXED);
         NTF_LOG("Note: the glyph-wobble fix is off this boot because its safety state could not be verified; other fixes still run.");
     }
 
@@ -997,7 +1095,8 @@ NickelHook(
 extern "C" __attribute__((visibility("default")))
 FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_flags) {
     if (!real_FT_Load_Glyph) { ntf_hint_disable_for_safety("real FT_Load_Glyph was NULL"); return 1; }
-    if (ntf_hint_disabled || ntf_hint_marker_state() != NTF_HINT_MARKER_ABSENT)
+    if (__atomic_load_n(&ntf_hint_disabled, __ATOMIC_RELAXED)
+        || ntf_hint_marker_state() != NTF_HINT_MARKER_ABSENT)
         return real_FT_Load_Glyph(face, glyph_index, load_flags);
     // Orthogonal to iType's CSM stem-weighting (Font Weight) — that's set before the load.
     FT_Int32 eff = load_flags;
@@ -1011,16 +1110,28 @@ FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_fla
 // callback must not be able to re-enter Fix 5 with a partially constructed KepubBookReader.
 extern "C" __attribute__((visibility("default")))
 void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
-    ntf_kepub_reader = nullptr;
-    ntf_kepub_reader_view = nullptr;
-    ntf_chapter_view = nullptr;
-    ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
-    ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
-    ntf_vert_views_flush();        // Fix 2: stale per-view state must not survive into a new book
+    bool on_qt = ntf_on_qt_thread();
+    if (on_qt) {
+        ntf_kepub_reader = nullptr;
+        ntf_kepub_reader_view = nullptr;
+        ntf_chapter_view = nullptr;
+        ntf_chapter_needs_fix = false; // Fix 5: re-armed by each chapter's font-CSS injection
+        ntf_fontfix_logged = false;    // let Fix 5 log its one friendly note again for this book
+        ntf_vert_views_flush();        // Fix 2: stale per-view state must not survive into a new book
+    }
+    // A NULL real constructor is unrecoverable (there is nothing to construct
+    // with) but also unreachable: NickelHook only installs a hook whose symbol
+    // resolved. The guard exists purely to avoid a jump through NULL.
     if (!real_kepubReaderCtor) return;
     real_kepubReaderCtor(self, pluginState, widget);
-    ntf_kepub_reader = self;       // complete KepubBookReader; now safe for Fix 5 to call
-    ntf_kepub_reader_view = (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET);
+    if (on_qt) {
+        ntf_kepub_reader = self;   // complete KepubBookReader; now safe for Fix 5 to call
+        // The +24 layout holds only on firmware where the resolve-time thunk
+        // proved it; otherwise the view stays unknown until the first font-CSS
+        // injection learns it (ntf_learn_reader_view).
+        ntf_kepub_reader_view = ntf_kepubReaderWebkitDtorThunk
+            ? (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET) : nullptr;
+    }
 }
 // The destructor is the lifetime boundary for the opaque reader pointer above.
 // Clearing state before calling Nickel's destructor means no later WebkitView
@@ -1028,6 +1139,10 @@ void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
 extern "C" __attribute__((visibility("default")))
 void _ntf_kepubReaderDtor(void *self) {
     if (self == ntf_kepub_reader) {
+        // Clear even on a wrong thread (ntf_on_qt_thread still logs the
+        // anomaly): a dangling reader pointer is strictly worse than the race
+        // being reported.
+        (void)ntf_on_qt_thread();
         ntf_kepub_reader = nullptr;
         ntf_kepub_reader_view = nullptr;
         ntf_chapter_view = nullptr;
@@ -1038,8 +1153,8 @@ void _ntf_kepubReaderDtor(void *self) {
 }
 extern "C" __attribute__((visibility("default")))
 void _ntf_cwv_setWritingDirection(void *self, int dir) {
-    bool vert = ntf_vertfix_ready && (dir == ntf_wd_vrl || dir == ntf_wd_vlr);
-    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready) {
+    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_on_qt_thread()) try {
+        bool vert = (dir == ntf_wd_vrl || dir == ntf_wd_vlr);
         // Repair the slot from what it ACTUALLY holds (see ntf_vert_views): set only an empty slot,
         // merge into (never replace) existing CSS, strip only our own rule. The table is never, by
         // itself, a reason to clear — a stale entry from a destroyed view whose address got recycled
@@ -1077,6 +1192,11 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
                 ntf_vert_set_url(self, QUrl());   // no read-back: old set/clear behavior
             }
         }
+    } catch (...) {
+        // Contain Qt allocation failures: an OOM inside this cosmetic repair
+        // must degrade to stock rendering, not unwind into Nickel's frames
+        // (an exception escaping an extern "C" hook ends in std::terminate).
+        NTF_LOG("Note: the vertical-text fix skipped one update after an internal error (likely low memory).");
     }
     if (real_cwv_setWritingDirection) real_cwv_setWritingDirection(self, dir);
 }
@@ -1088,26 +1208,37 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
 // only read state, never mutate it.
 extern "C" __attribute__((visibility("default")))
 void _ntf_wv_addCssToHtml(void *self, QString *css) {
-    // WebkitView is shared by dictionary/store/browser views.  Only a call on
-    // the current KepubBookReader may arm Fix 5; otherwise a later page change
-    // could route a non-reader event into the reader-font methods.
-    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_kepubReaderWebkitDtorThunk
-        && ntf_kepub_reader_view == self && !ntf_in_fixonturn) {
-        ntf_chapter_needs_fix = true;
-        ntf_chapter_view = self;
-    }
-    // FIX 2: this call REPLACES the view's whole user-stylesheet slot (it re-encodes `css` as a
-    // data: URL and hands it to setUserStyleSheetUrl — see ntf_vert_views), which would wipe a
-    // previously-set vertical override. If the injection is bound for a view we know is vertical,
-    // carry the override inside the injected CSS so both survive in the one slot. `css` is this
-    // call's own by-value copy (a caller-owned temporary per the ARM C++ ABI), so appending here
-    // only affects this call.
-    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_wv_webView && css) {
-        void *cwv = ntf_wv_webView(self);
-        bool tracked = cwv && ntf_vert_view_tracked(cwv);
-        bool append = tracked && !css->contains(QString::fromLatin1(NTF_VERT_RULE));
-        NTF_DBG("addCssToHtml wv=%p cwv=%p tracked=%d append=%d", self, cwv, tracked ? 1 : 0, append ? 1 : 0);
-        if (append) css->append(QLatin1Char('\n')).append(QString::fromLatin1(NTF_VERT_RULE));
+    try {
+        // WebkitView is shared by dictionary/store/browser views.  Only a call on
+        // the current KepubBookReader may arm Fix 5; otherwise a later page change
+        // could route a non-reader event into the reader-font methods. On firmware
+        // where the +24 layout is unproven the reader's view starts out unknown
+        // and the first injection while a reader is live tries to learn it.
+        if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && !ntf_in_fixonturn
+            && ntf_on_qt_thread()
+            && (ntf_kepub_reader_view == self
+                || (!ntf_kepub_reader_view && ntf_learn_reader_view(self)))) {
+            ntf_chapter_needs_fix = true;
+            ntf_chapter_view = self;
+        }
+        // FIX 2: this call REPLACES the view's whole user-stylesheet slot (it re-encodes `css` as a
+        // data: URL and hands it to setUserStyleSheetUrl — see ntf_vert_views), which would wipe a
+        // previously-set vertical override. If the injection is bound for a view we know is vertical,
+        // carry the override inside the injected CSS so both survive in the one slot. `css` is this
+        // call's own by-value copy (a caller-owned temporary per the ARM C++ ABI), so appending here
+        // only affects this call.
+        if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_wv_webView && css
+            && ntf_on_qt_thread()) {
+            void *cwv = ntf_wv_webView(self);
+            bool tracked = cwv && ntf_vert_view_tracked(cwv);
+            bool append = tracked && !css->contains(QString::fromLatin1(NTF_VERT_RULE));
+            NTF_DBG("addCssToHtml wv=%p cwv=%p tracked=%d append=%d", self, cwv, tracked ? 1 : 0, append ? 1 : 0);
+            if (append) css->append(QLatin1Char('\n')).append(QString::fromLatin1(NTF_VERT_RULE));
+        }
+    } catch (...) {
+        // Contain Qt allocation failures (see _ntf_cwv_setWritingDirection);
+        // the injection then goes through unmodified, which is stock behavior.
+        NTF_LOG("Note: a CSS-injection fix skipped one update after an internal error (likely low memory).");
     }
     if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
 }
@@ -1122,13 +1253,19 @@ void _ntf_wv_setCurrentPage(void *self, int page) {
     // Consume only on the same live reader/view that armed the flag.  The
     // destructor normally clears ntf_kepub_reader; the identity checks also
     // make a missing destructor hook fail safe by sitting Fix 5 out.
-    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_kepubReaderWebkitDtorThunk && ntf_chapter_needs_fix
+    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_chapter_needs_fix
         && self == ntf_chapter_view && self == ntf_kepub_reader_view && !ntf_in_fixonturn
-        && ntf_pageStyleCss && ntf_kbr_addCssToHtml) {
+        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_on_qt_thread()) {
         ntf_chapter_needs_fix = false;
         ntf_chapter_view = nullptr;
         ntf_in_fixonturn = true;
-        ntf_do_reinject(ntf_kepub_reader, page);
+        try {
+            ntf_do_reinject(ntf_kepub_reader, page);
+        } catch (...) {
+            // Contain Qt allocation failures: skipping one chapter's re-apply
+            // just leaves that chapter with stock behavior.
+            NTF_LOG("Note: the reader-font fix skipped one chapter after an internal error (likely low memory).");
+        }
         ntf_in_fixonturn = false;
     }
 }
