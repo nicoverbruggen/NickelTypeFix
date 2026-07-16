@@ -24,7 +24,7 @@ One more piece of context: by default this engine lays text out on WebKit's "sim
 
 If you're not a programmer, this section gives you the gist. The rest of the document tells the same story in full technical detail.
 
-**How the Kobo draws a book.** As the background section explains, kepub pages are drawn by the reader's built-in browser engine, and a font renderer turns the letter shapes into pixels. Each of the six fixes corrects one specific mistake in that pipeline.
+**How the Kobo draws a book.** As the background section explains, kepub pages are drawn by the reader's built-in browser engine, and a font renderer turns the letter shapes into pixels. Each of the seven fixes corrects one specific mistake in that pipeline.
 
 **What "hooking" means.** The mod never edits the Kobo's software on disk. When the reader starts, the mod redirects a few of its internal calls to itself. It works like mail forwarding: a letter sent from one part of the reader to another arrives at the mod first, gets corrected, and is passed on. Remove the mod and the mail goes directly again.
 
@@ -33,6 +33,8 @@ If you're not a programmer, this section gives you the gist. The rest of the doc
 **What "hinting" is (Fix 1).** Fonts can be snapped to the pixel grid to look crisper. Kobo's renderer snaps even fonts that carry no snapping instructions, and its guesswork places some letters a pixel too high or too low. That is the wobble. The fix asks for the letters unsnapped, so every letter lands exactly where the font says it should.
 
 **One sticky note per page (Fix 2).** Every view in the reader (the book page, the dictionary popup, the browser) has a single slot for extra styling instructions. Think of it as one sticky note per view. The reader uses that note for its own instructions, such as your chosen reading font or the dictionary's text size, and the vertical-text fix needs to leave an instruction there too. An earlier version of the fix replaced the whole note, which destroyed whatever was already on it; that is why the dictionary text once turned tiny. The fix now reads the note, adds its one line, and later removes only that line.
+
+**Capitals with too much space after them (Fix 7).** Some fonts include a feature meant for text set in ALL CAPITALS, which adds a little breathing room around each capital. The reader mistakenly uses it for ordinary text too, so a normal word starting with a capital gets an oddly wide gap after that first letter. The fix removes just that one feature from each font as it loads, for any font, so capitals sit normally again; ordinary letter spacing and kerning are left alone.
 
 **Why it can't brick your device.** Before doing anything at boot, the mod renames itself out of the way. Only after the reader has started successfully does it rename itself back. If a boot goes wrong, the next boot simply doesn't load the mod. Since nothing on disk is ever modified, the worst case is always the same as not having the mod installed.
 
@@ -198,6 +200,18 @@ page turns within the chapter: nothing armed → nothing done
 ```
 
 `WebkitView::addCssToHtml` (PLT-hooked, `_ZN10WebkitView12addCssToHtmlE7QString`) fires when a chapter injects its font CSS, which arms the fix; the next `WebkitView::setCurrentPage` (`_ZN10WebkitView14setCurrentPageEi`) consumes it: it calls `KepubBookReader::pageStyleCss` to rebuild the rule and `KepubBookReader::addCssToHtml` (both dlsym'd), which removes the old frame rule (`QWebFrame::removeCSSRule`) and re-sets the page's user stylesheet through the base `WebkitView::addCssToHtml`, so WebKit re-cascades and re-resolves the font in place. This is the same re-inject the reader itself runs on a font size/family change (`applyStyling`), minus the repaginate, so the reading position doesn't move. On an already-correct chapter it renders the identical font and is invisible. A re-entrancy guard keeps the fix's own re-inject from re-arming it, and hooking the `KepubBookReader` constructor (`_ZN15KepubBookReaderC1EP11PluginStateP7QWidget`) resets the per-book state. Every symbol here is `optional`; a missing one sits the fix out. This fix is independent of `optimizeLegibility` and only affects kepub books.
+
+---
+
+## Fix 7 — Capital spacing (cpsp) · `ntf_cpsp_fix`
+
+**The bug.** Some fonts carry an OpenType `cpsp` (Capital Spacing) feature. It exists to add a little inter-letter room to text set in *all capitals*, and a correct engine applies it only to runs of capitals. Kobo's reader applies it to ordinary mixed-case body text, so every capital is pushed away from the letter after it, leaving a loose gap (the `D` in `Docks` is the giveaway). This is only visible with `optimizeLegibility` on, the path where the reader applies GPOS features at all.
+
+**Mechanism.** With `optimizeLegibility`, Kobo's Qt 5.2 shapes text through its *old* HarfBuzz (`shapeTextWithHarfbuzz`), which applies a font's default-LangSys GPOS features wholesale, with no per-feature curation. `cpsp` is a GPOS single-positioning lookup that adds advance to each capital; because the old shaper enables it unconditionally, it fires on every capital in running text, not just in the all-caps runs it is meant for. (Qt's newer HarfBuzz-NG uses a curated default feature list that excludes `cpsp`, but this firmware defaults to the old shaper.) The feature also can't be gated correctly inside the shaper: `cpsp` and the also-default `case` feature share the same single-positioning code and differ only in data, so there is no per-tag point at which to skip only `cpsp`.
+
+**The fix.** Rather than touch the shaper, drop `cpsp` from the font itself as it loads, which works for any font. `QFontDatabase::addApplicationFont` (PLT-hooked in `libnickel`, `_ZN13QFontDatabase18addApplicationFontERK7QString`) is the call Kobo's `FontManager` uses to register every reader font: core, system, and sideloaded. The hook reads the font file, walks its GPOS `FeatureList`, and for each `cpsp` feature sets that Feature table's `LookupIndexCount` to `0`, so the feature applies no lookups. That is a bounds-checked two-byte edit per feature: no table re-serialization, and `case`, `kern`, and every other feature are left byte-for-byte intact. The edited bytes are then registered with `QFontDatabase::addApplicationFontFromData`. It works because the old shaper reads the default-LangSys features straight from the font, so an empty `cpsp` is simply a no-op.
+
+Fail-safe throughout: a font with no GPOS table, no `cpsp`, an unreadable path (a Qt resource, say), a malformed table, or any allocation failure falls through to the real `addApplicationFont` with the original file, so a font always loads. Only fonts actually changed take the from-data path, so the blast radius is minimal. Validated in the offscreen render harness (the loose `Docks` `D→o` gap goes from `21px` to `15px`, while the `case`-driven hyphen raise and `Va` kerning stay intact) and confirmed on-device, where the hook fires and strips `cpsp` from both a sideloaded font and one of Kobo's own. It always strips regardless of `optimizeLegibility`, though the visible effect only appears when `optimizeLegibility` is on. The symbol is `optional`; if it isn't present the fix sits out.
 
 ---
 

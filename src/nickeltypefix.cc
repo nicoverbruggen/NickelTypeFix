@@ -1135,6 +1135,9 @@ static bool ntf_strip_cpsp(uint8_t *data, size_t len) {
 
 // addApplicationFont is static int(const QString&); via NickelHook it's a plain int(const QString*).
 static int (*real_addApplicationFont)(const QString *) = nullptr;
+// QRawFont::QRawFont(const QByteArray&, qreal, QFont::HintingPreference) — WebKit's embedded-font
+// path. qreal is double here (the 'd' in the mangled name), passed in d0 under the hard-float ABI.
+static void (*real_QRawFontCtor)(void *, const QByteArray *, double, int) = nullptr;
 
 static struct nh_info NickelTypeFixInfo = {
     .name            = "NickelTypeFix",
@@ -1167,6 +1170,13 @@ static struct nh_hook NickelTypeFixHooks[] = {
     // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo.
     { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
+    // FIX 7 (embedded fonts) — TO BE TESTED LATER. WebKit constructs a QRawFont from epub @font-face
+    // bytes; this hooks that ctor in the WebKit lib's PLT to strip cpsp from embedded fonts too. Left
+    // DISABLED (entry commented out) until it can be validated on-device with an epub whose @font-face
+    // font actually carries cpsp — the reader-font hook above is confirmed, this path is not. The hook
+    // body (_ntf_QRawFontCtor) and real_QRawFontCtor are kept below; re-enable by uncommenting this.
+    // { .sym = "_ZN8QRawFontC1ERK10QByteArraydN5QFont17HintingPreferenceE", .sym_new = "_ntf_QRawFontCtor",
+    //   .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_QRawFontCtor), .desc = "fix 7: strip cpsp from embedded @font-face fonts", .optional = true },
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
@@ -1405,4 +1415,28 @@ int _ntf_addApplicationFont(const QString *fileName) {
         NTF_LOG("Note: the capital-spacing fix skipped one font after an internal error (likely low memory).");
         return real_addApplicationFont(fileName);
     }
+}
+
+// FIX 7 (embedded fonts) — TO BE TESTED LATER; NOT CURRENTLY WIRED (its entry in NickelTypeFixHooks
+// is commented out until it can be validated on-device). Kept here ready to re-enable.
+// kepub @font-face fonts don't go through addApplicationFont; WebKit builds
+// them straight into a QRawFont from the embedded bytes. Same treatment, done in place: strip cpsp
+// from the QByteArray before the ctor parses it. WebKit owns fontData and keeps it alive across the
+// ctor, so there's no lifetime concern; a shared buffer detaches (copies) before we touch it, so
+// another holder of the same bytes is unaffected. Best-effort: on any problem the ctor runs on the
+// original data. The try/catch contains Qt allocation failures (a throw out of an extern "C" hook
+// would std::terminate Nickel).
+extern "C" __attribute__((visibility("default")))
+void _ntf_QRawFontCtor(void *self, const QByteArray *fontData, double pixelSize, int hintingPreference) {
+    if (!real_QRawFontCtor) return;
+    if (ntf_enabled() && ntf_cpsp_fix() && fontData && !fontData->isEmpty()) {
+        try {
+            QByteArray *mut = const_cast<QByteArray *>(fontData);
+            if (ntf_strip_cpsp(reinterpret_cast<uint8_t *>(mut->data()), (size_t)mut->size()))
+                NTF_DBG("cpsp: stripped Capital Spacing from an embedded font (%d bytes)", mut->size());
+        } catch (...) {
+            NTF_LOG("Note: the capital-spacing fix skipped one embedded font after an internal error (likely low memory).");
+        }
+    }
+    real_QRawFontCtor(self, fontData, pixelSize, hintingPreference);
 }

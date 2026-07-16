@@ -5,6 +5,7 @@
 ### Added
 
 - **Letter-spacing now applies to spaces too** (`ntf_letterspace_spaces`, on by default). CSS `letter-spacing` (tracking) widened the letters but left the spaces, and the letter before each space, at their natural width, so any multi-word letter-spaced text ran its words together. They now get the same tracking, so words stay apart. It's an in-memory byte patch to Qt's text shaper (`QTextEngine::shapeText`), in the same family as the justification fixes: nothing is written to any device library, word-spacing is untouched, and it does nothing to text that has no letter-spacing. Turn it off with `ntf_letterspace_spaces:0`.
+- **Capital-spacing (`cpsp`) fix** (`ntf_cpsp_fix`, on by default): some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps text, but Kobo's reader applies it to ordinary body text too, so every capital is pushed away from the letter after it and leaves a loose gap (the `D` in `Docks` is the tell). The mod now removes `cpsp` from each font as it loads, for any font, both your sideloaded fonts and Kobo's own, so capitals sit at their normal spacing again. It reads the font as the reader registers it, zeroes just the `cpsp` feature, and hands the edited font back; kerning and every other feature are left untouched, and a font it can't read or that has no `cpsp` loads exactly as before. Turn it off with `ntf_cpsp_fix:0`.
 
 ## v0.6
 

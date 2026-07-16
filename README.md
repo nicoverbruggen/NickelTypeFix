@@ -21,6 +21,8 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 → patches Qt's text shaper so the spaces get the same tracking, the way browsers render it.
 6. **Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
 → re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
+7. **Capital spacing (`cpsp`) applied to body text**: some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps runs, but the reader applies it everywhere, so every capital is pushed away from the letter after it (a loose gap after the `D` in `Docks`). 
+→ strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing; kerning and other features are untouched.
 
 ## Why was this made?
 
@@ -100,6 +102,7 @@ first boot; there's no shipped template file). Changes take effect on reboot.
 | `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
 | `ntf_letterspace_spaces` | `1` | Fix 5 (letter-spacing on spaces): give spaces the same letter-spacing as the letters, so letter-spaced words don't run together. `0` = stock. |
 | `ntf_kepub_fontfix` | `1` | Fix 6 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
+| `ntf_cpsp_fix` | `1` | Fix 7 (capital spacing): strip the `cpsp` feature so capitals aren't spaced apart in body text. Works for any font. `0` = stock. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
 By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.
