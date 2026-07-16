@@ -87,6 +87,14 @@ CSS `letter-spacing` (tracking) spread the letters but left the spaces at their 
 |---|---|---|
 | ![letter-spacing original](docs/screenshots/letterspacing-broken.png) | ![letter-spacing diff](docs/highlight/letterspacing-diff.png) | ![letter-spacing fixed](docs/screenshots/letterspacing-correct.png) |
 
+### 5. Capital spacing (cpsp) fix
+
+Some fonts carry the OpenType `cpsp` (Capital Spacing) feature, meant only for all-caps text, and the reader applies it to ordinary body text too, so every capital is pushed away from the letter after it and that extra space spreads across the whole line. The fix removes `cpsp`, so capitals sit at their normal spacing again. Because a capital shifts everything after it, the diff lights up whole lines pulling tighter (red is the looser original, green the corrected position), and further down the page the text re-flows as words no longer get pushed to the next line:
+
+| original | diff | fixed |
+|---|---|---|
+| ![capital spacing original](docs/screenshots/cap-broken.png) | ![capital spacing diff](docs/highlight/cap-diff.png) | ![capital spacing fixed](docs/screenshots/cap-correct.png) |
+
 ## Configuration
 
 Settings live in `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on
