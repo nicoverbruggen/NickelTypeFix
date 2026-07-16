@@ -1,8 +1,9 @@
 name: Anchors
 
 # Validates the in-memory byte-patch anchors (justification + letter-spacing) against
-# every 4.x Kobo firmware on the public mirror, the way syms validates //libnickel symbols.
-# Runs on pushes to main (not tags) so you can push, confirm it's green, then tag a release.
+# every tracked Kobo firmware at the mod's version floor, the way syms validates
+# //libnickel symbols. Runs on pushes to main (not tags) so you can push, confirm it's
+# green, then tag a release.
 
 on:
   push:
@@ -22,21 +23,15 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Firmware-list cache key
-        id: fw
-        # Key the cache on the set of 4.x firmware on the mirror. When a new build appears
-        # the key changes; restore-keys pulls the previous corpus so only the new libs download.
-        run: |
-          hash=$(curl -fsSL https://kfw.storage.pgaskin.net/MD5SUMS \
-            | grep -oE 'kobo-update-4\.[0-9.]+' | sort -u | sha256sum | cut -c1-16)
-          echo "hash=$hash" >> "$GITHUB_OUTPUT"
-
       - name: Cache firmware libs
         uses: actions/cache@v4
         with:
+          # Key on the tracked firmware list. When it changes (a build added via
+          # mkfwlist.go) the key changes; restore-keys pulls the previous corpus so
+          # only the new libs download.
           path: test/anchors/corpus
-          key: qt-corpus-v1-${{ steps.fw.outputs.hash }}
-          restore-keys: qt-corpus-v1-
+          key: qt-corpus-v2-${{ hashFiles('test/anchors/firmwares.tsv') }}
+          restore-keys: qt-corpus-v2-
 
       - name: Validate anchors
         working-directory: test/anchors

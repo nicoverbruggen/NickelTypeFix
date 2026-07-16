@@ -40,11 +40,6 @@ import (
 	"sync"
 )
 
-const (
-	md5sumsURL = "https://kfw.storage.pgaskin.net/MD5SUMS"
-	mirrorBase = "https://kfw.storage.pgaskin.net/"
-)
-
 // Qt libs we extract from each firmware and scan.
 var libFiles = map[string]string{ // key -> path inside KoboRoot.tgz
 	"Gui":    "usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/libQtGui.so.4.6.2",
@@ -183,8 +178,10 @@ func checkSite(arrays map[string][]byte, s siteDef, lib []byte) (result, string)
 func main() {
 	src := flag.String("src", "", "path to nickeltypefix.cc (default: locate ../../src/nickeltypefix.cc)")
 	corpus := flag.String("corpus", "corpus", "dir to cache extracted firmware libs")
-	only := flag.String("only", "", "comma-separated versions to check (default: all 4.x from the mirror)")
-	offline := flag.Bool("offline", false, "use only cached libs under -corpus; never hit the network")
+	list := flag.String("list", "firmwares.tsv", "firmware list (version<tab>url<tab>md5)")
+	floor := flag.String("floor", "4.21", "minimum firmware version to check (the mod's support floor)")
+	only := flag.String("only", "", "comma-separated versions to check (default: all in -list at/above -floor)")
+	offline := flag.Bool("offline", false, "use only cached libs under -corpus; never download")
 	flag.Parse()
 
 	srcPath := *src
@@ -204,7 +201,7 @@ func main() {
 	fmt.Printf("parsed %d byte arrays from %s\n", len(arrays), srcPath)
 
 	var versions []string
-	var fwName map[string]string
+	var fwURL map[string]string
 	if *only != "" {
 		versions = strings.Split(*only, ",")
 	}
@@ -213,13 +210,13 @@ func main() {
 			versions = listCorpus(*corpus)
 		}
 	} else {
-		fwName, err = firmwareList()
+		fwURL, err = readFwList(*list, *floor)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: firmware list: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error: firmware list %q: %v\n", *list, err)
 			os.Exit(2)
 		}
 		if len(versions) == 0 {
-			for v := range fwName {
+			for v := range fwURL {
 				versions = append(versions, v)
 			}
 		}
@@ -247,7 +244,7 @@ func main() {
 			defer func() { <-sem }()
 			libs := map[string][]byte{}
 			for key, inner := range libFiles {
-				b, err := getLib(v, key, inner, *corpus, fwName)
+				b, err := getLib(v, key, inner, *corpus, fwURL)
 				if err != nil {
 					rows[i] = rowR{err: fmt.Errorf("%s: %w", key, err)}
 					return
@@ -350,55 +347,67 @@ func listCorpus(dir string) []string {
 	return out
 }
 
-func firmwareList() (map[string]string, error) {
-	resp, err := http.Get(md5sumsURL)
+// readFwList reads firmwares.tsv (version<tab>url<tab>md5) and returns version->url
+// for every entry at or above floor (the mod's support floor).
+func readFwList(pathTSV, floor string) (map[string]string, error) {
+	b, err := os.ReadFile(pathTSV)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("MD5SUMS: status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	fl := vkey(floor)
 	out := map[string]string{}
-	for _, line := range strings.Split(string(body), "\n") {
+	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
-		_, name, ok := strings.Cut(line, "  ")
-		if !ok {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		v := cutVersion(name)
-		if strings.HasPrefix(v, "4.") { // 4.x only: QtEmbedded/QtWebKit stack
-			out[v] = path.Clean(name)
+		f := strings.Split(line, "\t")
+		if len(f) < 2 {
+			continue
 		}
+		if cmpVer(vkey(f[0]), fl) >= 0 {
+			out[f[0]] = f[1]
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no firmware >= %s in %s", floor, pathTSV)
 	}
 	return out, nil
 }
 
-func cutVersion(name string) string {
-	_, v, _ := strings.Cut(name, "kobo-update-")
-	v = v[:len(v)-len(strings.TrimLeft(v, "0123456789."))]
-	return strings.Trim(v, ".")
+var digitsRe = regexp.MustCompile(`\d+`)
+
+func vkey(v string) []int {
+	var out []int
+	for _, p := range digitsRe.FindAllString(v, -1) {
+		n, _ := strconv.Atoi(p)
+		out = append(out, n)
+	}
+	return out
+}
+
+func cmpVer(a, b []int) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(a) - len(b)
 }
 
 func lessVersion(a, b string) bool {
-	as, bs := strings.Split(a, "."), strings.Split(b, ".")
-	for i := 0; i < len(as) && i < len(bs); i++ {
-		x, _ := strconv.Atoi(as[i])
-		y, _ := strconv.Atoi(bs[i])
-		if x != y {
-			return x < y
-		}
+	if c := cmpVer(vkey(a), vkey(b)); c != 0 {
+		return c < 0
 	}
-	return len(as) < len(bs)
+	return a < b // stable tie-break for same-numeric versions (e.g. a -s variant)
 }
 
 // getLib returns the lib bytes for a version, from the corpus cache or by fetching.
 // Returns (nil, nil) if the firmware genuinely lacks the lib (cached as a 0-byte marker).
-func getLib(version, key, inner, corpus string, fwName map[string]string) ([]byte, error) {
+func getLib(version, key, inner, corpus string, fwURL map[string]string) ([]byte, error) {
 	cache := filepath.Join(corpus, version, filepath.Base(inner))
 	if b, err := os.ReadFile(cache); err == nil {
 		if len(b) == 0 {
@@ -406,10 +415,10 @@ func getLib(version, key, inner, corpus string, fwName map[string]string) ([]byt
 		}
 		return b, nil
 	}
-	if fwName == nil {
-		return nil, fmt.Errorf("not cached and no firmware URL (offline)")
+	if fwURL == nil {
+		return nil, fmt.Errorf("not cached and offline")
 	}
-	if err := fetchFirmwareLibs(version, fwName[version], corpus); err != nil {
+	if err := fetchFirmwareLibs(version, fwURL[version], corpus); err != nil {
 		return nil, err
 	}
 	if b, err := os.ReadFile(cache); err == nil {
@@ -423,15 +432,15 @@ func getLib(version, key, inner, corpus string, fwName map[string]string) ([]byt
 
 // fetchFirmwareLibs downloads the KoboRoot.tgz section of one firmware and writes
 // the wanted libs (and 0-byte markers for any missing) into corpus/<version>/.
-func fetchFirmwareLibs(version, name, corpus string) error {
-	if name == "" {
-		return fmt.Errorf("no mirror filename for %s", version)
+func fetchFirmwareLibs(version, url, corpus string) error {
+	if url == "" {
+		return fmt.Errorf("no url for %s", version)
 	}
 	dir := filepath.Join(corpus, version)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	ra, err := newHTTPReaderAt(mirrorBase + name)
+	ra, err := newHTTPReaderAt(url)
 	if err != nil {
 		return err
 	}
@@ -496,6 +505,9 @@ func fetchFirmwareLibs(version, name, corpus string) error {
 			return err
 		}
 		got[path.Clean(h.Name)] = true
+		if len(got) == len(want) {
+			break // have every wanted lib; stop streaming the rest of the tgz
+		}
 	}
 	// mark any lib the firmware lacked with a 0-byte file so we don't refetch
 	for inner, dst := range want {
