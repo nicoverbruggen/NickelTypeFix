@@ -8,6 +8,8 @@
 //   3. Justify: koboSpan     — in-memory patch, QTextEngine::justify (libQtGui)   [ntf_justify_kospan]
 //   4. Justify: punctuation  — in-memory patch, isInterIdeographExpansionTarget (libQtWebKit) [ntf_justify_punct]
 //   5. Reader-font fallback  — re-apply the reader-font CSS per kepub chapter (libnickel)   [ntf_kepub_fontfix]
+//   6. Letter-spacing spaces — in-memory patch, QTextEngine::shapeText (libQtGui)      [ntf_letterspace_spaces]
+//   7. Capital spacing (cpsp) — strip the cpsp feature per font at load, any font (libnickel/QFontDatabase)  [ntf_cpsp_fix]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 5 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -36,6 +38,8 @@
 
 #include <QString>
 #include <QUrl>
+#include <QByteArray>
+#include <QFontDatabase>
 
 #include <NickelHook.h>
 
@@ -91,6 +95,12 @@ ntf_justify_punct:1
 # visible. 0 = off.
 ntf_kepub_fontfix:1
 
+# Fix 7 - capital spacing (cpsp): some fonts carry an OpenType 'cpsp' (Capital Spacing) feature meant
+# only for all-caps text. Kobo's reader applies it to ordinary body text too, pushing every capital
+# away from the next letter (a loose gap after a capital, e.g. the D in "Docks"). This removes cpsp
+# from each font as it loads, for any font. Kerning and every other feature are left untouched. 0 = off.
+ntf_cpsp_fix:1
+
 # Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
 # that can't apply, a failed write, a safety trip) are always logged regardless, and a problem in this
 # file (a misspelled setting, an invalid value) turns verbose logging on automatically for that boot.
@@ -103,7 +113,7 @@ ntf_log:0
 extern "C" const char *const ntf_known_keys[] = {
     "ntf_enabled", "ntf_no_hinting", "ntf_hinting_allowlist", "ntf_vertfix",
     "ntf_justify_kospan", "ntf_justify_punct", "ntf_kepub_fontfix",
-    "ntf_letterspace_spaces", "ntf_log",
+    "ntf_letterspace_spaces", "ntf_cpsp_fix", "ntf_log",
     NULL,
 };
 
@@ -1066,6 +1076,66 @@ static bool ntf_uninstall() {
     return ok;
 }
 
+// ================= FIX 7: capital spacing (cpsp) (libnickel / QFontDatabase) =================
+// Kobo's reader (Qt 5.2, optimizeLegibility on) shapes through the OLD HarfBuzz, which applies a
+// font's default-LangSys GPOS features wholesale — including 'cpsp' (Capital Spacing). cpsp is meant
+// only for all-caps runs, so in mixed-case body text it shoves every capital away from its neighbour
+// (the loose "D" in "Docks"). The stripped shaper can't be made to gate it correctly, but we can drop
+// cpsp from the font itself as it loads, for ANY font: hook QFontDatabase::addApplicationFont (the
+// call FontManager uses to register every reader font — core, system, sideloaded), read the file,
+// zero each cpsp feature's lookup count in memory, and register the edited bytes instead. 'case',
+// 'kern', and everything else are untouched. Fail-safe throughout: on any problem the original font
+// loads unchanged.
+
+static bool ntf_cpsp_fix() { return ntf_global_config_bool("ntf_cpsp_fix", true); }
+
+// Big-endian accessors (sfnt tables are big-endian). Every read is bounds-checked by the caller.
+static inline uint16_t ntf_be16(const uint8_t *p) { return (uint16_t)(((uint16_t)p[0] << 8) | p[1]); }
+static inline uint32_t ntf_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+// Strip GPOS 'cpsp' in place by zeroing each cpsp Feature table's LookupIndexCount, so it applies no
+// lookups. This leaves 'case'/'kern'/every other feature byte-for-byte intact and needs no table
+// re-serialization. Returns true if anything changed. Every offset is bounds-checked against the
+// GPOS table and the buffer; any inconsistency returns without touching the font, and the caller
+// then loads it unchanged. Works because the old shaper applies default-LangSys GPOS wholesale, so
+// an empty cpsp feature is simply a no-op.
+static bool ntf_strip_cpsp(uint8_t *data, size_t len) {
+    if (!data || len < 12) return false;
+    uint32_t sfnt = ntf_be32(data);
+    // Single sfnt fonts only (TTF 0x00010000, 'OTTO', 'true', 'typ1'); skip collections and unknowns.
+    if (sfnt != 0x00010000u && sfnt != 0x4F54544Fu && sfnt != 0x74727565u && sfnt != 0x74797031u)
+        return false;
+    uint16_t num_tables = ntf_be16(data + 4);
+    if (12 + (size_t)num_tables * 16 > len) return false;   // table directory: 16 bytes each from off 12
+    uint32_t gpos_off = 0, gpos_len = 0;
+    for (uint16_t i = 0; i < num_tables; i++) {
+        const uint8_t *rec = data + 12 + (size_t)i * 16;
+        if (ntf_be32(rec) == 0x47504F53u) { gpos_off = ntf_be32(rec + 8); gpos_len = ntf_be32(rec + 12); break; }  // 'GPOS'
+    }
+    if (!gpos_off || gpos_len < 10 || (size_t)gpos_off + gpos_len > len) return false;
+    const uint8_t *gpos = data + gpos_off;
+    uint16_t feat_list_off = ntf_be16(gpos + 6);   // GPOS header: version(4) scriptListOff(2) featureListOff(2)
+    if (feat_list_off < 10 || (size_t)feat_list_off + 2 > gpos_len) return false;
+    const uint8_t *flist = gpos + feat_list_off;
+    uint16_t feat_count = ntf_be16(flist);
+    if ((size_t)feat_list_off + 2 + (size_t)feat_count * 6 > gpos_len) return false;   // FeatureRecords: 6 bytes each
+    bool changed = false;
+    for (uint16_t i = 0; i < feat_count; i++) {
+        const uint8_t *rec = flist + 2 + (size_t)i * 6;   // FeatureRecord: tag(4) + featureOffset(2, rel to FeatureList)
+        if (ntf_be32(rec) != 0x63707370u) continue;       // 'cpsp'
+        size_t ft = (size_t)feat_list_off + ntf_be16(rec + 4);   // Feature table, relative to GPOS start
+        if (ft + 4 > gpos_len) continue;                  // malformed record: skip it, keep the rest
+        uint8_t *lic = data + gpos_off + ft + 2;          // Feature table: featureParams(2) + lookupIndexCount(2)
+        if (ntf_be16(lic) != 0) { lic[0] = 0; lic[1] = 0; changed = true; }
+    }
+    return changed;
+}
+
+// addApplicationFont is static int(const QString&); via NickelHook it's a plain int(const QString*).
+static int (*real_addApplicationFont)(const QString *) = nullptr;
+
 static struct nh_info NickelTypeFixInfo = {
     .name            = "NickelTypeFix",
     .desc            = "Fix Kobo reader text rendering: hinting wobble, vertical text, and justification.",
@@ -1092,6 +1162,11 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_setCurrentPage), .desc = "re-apply reader font per chapter", .optional = true },
     // (letter-spacing on spaces is an in-memory byte patch, not a hook — see NTF_JUSTIFY_FIXES.)
+    // FIX 7 — capital spacing: strip cpsp from each reader font as it's registered. Optional; a
+    // missing symbol just sits the fix out. QFontDatabase::addApplicationFont is a Qt import in
+    // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo.
+    { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
@@ -1293,5 +1368,41 @@ void _ntf_wv_setCurrentPage(void *self, int page) {
             NTF_LOG("Note: the reader-font fix skipped one chapter after an internal error (likely low memory).");
         }
         ntf_in_fixonturn = false;
+    }
+}
+
+// FIX 7 — capital spacing. Intercept every reader-font registration, drop cpsp from the font in
+// memory, and register the edited bytes via addApplicationFontFromData. Best-effort: on ANY problem
+// we call the real addApplicationFont with the original path, so a font always loads. Only fonts we
+// actually change take the from-data path (minimal blast radius); everything else loads stock. The
+// try/catch contains Qt allocation failures — an exception escaping an extern "C" hook would
+// std::terminate Nickel.
+extern "C" __attribute__((visibility("default")))
+int _ntf_addApplicationFont(const QString *fileName) {
+    if (!real_addApplicationFont) return -1;
+    if (!ntf_enabled() || !ntf_cpsp_fix() || !fileName) return real_addApplicationFont(fileName);
+    try {
+        QByteArray path = fileName->toLocal8Bit();
+        FILE *f = fopen(path.constData(), "rb");
+        if (!f) return real_addApplicationFont(fileName);   // Qt resource path / unreadable: stock load
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return real_addApplicationFont(fileName); }
+        long sz = ftell(f);
+        if (sz <= 0 || sz > 32 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f); return real_addApplicationFont(fileName);
+        }
+        QByteArray buf;
+        buf.resize((int)sz);
+        size_t got = fread(buf.data(), 1, (size_t)sz, f);
+        fclose(f);
+        if (got != (size_t)sz) return real_addApplicationFont(fileName);
+        if (!ntf_strip_cpsp(reinterpret_cast<uint8_t *>(buf.data()), (size_t)sz))
+            return real_addApplicationFont(fileName);   // no cpsp: keep the stock file path
+        int id = QFontDatabase::addApplicationFontFromData(buf);
+        if (id < 0) return real_addApplicationFont(fileName);   // rejected: fall back to stock
+        NTF_DBG("cpsp: stripped Capital Spacing from %s (app font id %d)", path.constData(), id);
+        return id;
+    } catch (...) {
+        NTF_LOG("Note: the capital-spacing fix skipped one font after an internal error (likely low memory).");
+        return real_addApplicationFont(fileName);
     }
 }
