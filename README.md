@@ -110,7 +110,7 @@ Requires Kobo firmware **4.21+ (the 4.x series, which uses Qt 5.2 / QtWebKit / i
 
 **It does not work on 5.x (Qt6 / Chromium: no iType, no QtWebKit, and NickelHook doesn't load there).**
 
-The mod is not tied to any one model. Its in-memory patches (the two justification fixes and the letter-spacing fix) anchor to position-independent instruction patterns rather than fixed addresses. The justification patterns are verified byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour); the letter-spacing pattern is verified on 4.45.
+The mod is not tied to any one model. Its in-memory patches (the two justification fixes and the letter-spacing fix) anchor to position-independent instruction patterns rather than fixed addresses, and all three are verified present and byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour), even though those libraries otherwise diverge and the patterns sit at different offsets in each.
 
 ## Safety
 

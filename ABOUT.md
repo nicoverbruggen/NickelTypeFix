@@ -162,7 +162,7 @@ then, for each glyph k whose HB_GlyphAttributes.justification is a space:
     advances_x[k]   += wordSpacing
 ```
 
-That subtraction is Qt's deliberate but non-spec "no tracking around whitespace," and it is exactly what leaves the word gaps narrow. It is unchanged across every Qt from 4.6 to 6.x; the CSS WG accepted a spec-correct "track spaces too" model ([csswg-drafts#10193](https://github.com/w3c/csswg-drafts/issues/10193)) but no shipping Qt/QtWebKit implements it. The drawn text really does come from this path: patching the add-loop alone changes nothing, patching these two subtracts changes the drawn advances, confirmed by rendering under a debugger.
+That subtraction is what leaves the word gaps narrow, and it is **not** stock Qt: a source review of `QTextEngine::shapeText` from 4.6.2 through 6.x shows the space-handling block only *adds* `wordSpacing` to a run of spaces and never subtracts `letterSpacing`. The withholding is therefore specific to the QtEmbedded / iType binary Kobo freezes into the firmware, not upstream behavior, so no Qt release fixes it and a byte patch is the route. (The CSS WG did accept a spec-correct "track spaces too" model, [csswg-drafts#10193](https://github.com/w3c/csswg-drafts/issues/10193), but that is about the model, not this binary.) The drawn text really does come from this path: patching the add-loop alone changes nothing, while patching these two subtracts changes the drawn advances, confirmed by rendering under a debugger.
 
 **The fix.** Two byte-pairs in that loop (`libQtGui.so.4.6.2`) that `nop.w` the two subtracts, so spaces and the pre-space letter keep the tracking `shapeText` already gave them. `wordSpacing` (added right after) is untouched, and each subtract is `advances -= letterSpacing`, a no-op when there is no letter-spacing, so ordinary text is byte-identical.
 
@@ -214,7 +214,7 @@ A fix's edits are all located and verified before *any* is written (both-or-noth
 
 ## Firmware tolerance & safety
 
-- The justification anchors (Fixes 3, 4) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge, so the same patches hold across the device line; the letter-spacing anchor (Fix 5) is verified on 4.45. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
+- The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
 - The hooks (Fixes 1, 2, and 6) bind exact symbols and are `optional`; a rename makes that fix inert.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - Logging is quiet by default: a healthy boot writes nothing to `nickel-type-fix.log`. Problems (a fix that can't apply, a failed write, a safety trip, a mistake in the config file) are always logged, and a config mistake also switches full verbose logging on for that boot. Set `ntf_log:1` to log everything, so a single boot shows which fixes engaged.
