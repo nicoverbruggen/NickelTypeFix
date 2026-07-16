@@ -102,7 +102,8 @@ ntf_log:0
 // config above so the two lists can't drift apart: a key added there must be added here.
 extern "C" const char *const ntf_known_keys[] = {
     "ntf_enabled", "ntf_no_hinting", "ntf_hinting_allowlist", "ntf_vertfix",
-    "ntf_justify_kospan", "ntf_justify_punct", "ntf_kepub_fontfix", "ntf_log",
+    "ntf_justify_kospan", "ntf_justify_punct", "ntf_kepub_fontfix",
+    "ntf_letterspace_spaces", "ntf_log",
     NULL,
 };
 
@@ -539,6 +540,13 @@ static bool ntf_learn_reader_view(void *self) {
     return false;
 }
 
+// NOTE: "letter-spacing on spaces" (ntf_letterspace_spaces) is implemented as an in-memory byte patch
+// alongside the justification fixes below (see LSP_ANCHOR / NTF_JUSTIFY_FIXES), not a hook. Root cause:
+// QTextEngine::shapeText tracks every glyph, then a word/space loop subtracts letterSpacing back off
+// each space and the letter before it (Qt's non-spec "no tracking around whitespace"). The patch NOPs
+// the two subtracts so spaces and pre-space letters keep their tracking, matching browsers/CSS Text 3;
+// wordSpacing is untouched, and it is a no-op when letterSpacing==0.
+
 // ================= FIX 3+4: justification (in-memory byte patches) =================
 // TIMING: these edits run from ntf_init, which NickelHook calls from its library __constructor
 // as Nickel dlopen()s this plugin at startup — long before any book is opened. Nickel already has
@@ -560,6 +568,19 @@ static const unsigned char PUN_ANCHOR[] = {
 };
 static const unsigned char PUN_ORIG[] = { 0x18,0x46 };   // mov r0,r3 -> movs r0,#0
 static const unsigned char PUN_REPL[] = { 0x00,0x20 };
+// letter-spacing on spaces fix — libQtGui, QTextEngine::shapeText word/space loop, two sites at one
+// anchor (both required, both-or-nothing). shapeText adds letterSpacing to every glyph, then this loop
+// subtracts it back off each space and the letter before it (Qt's non-spec "no tracking around
+// whitespace"), then adds wordSpacing to the space. NOP the two subtracts so spaces and pre-space
+// letters keep their tracking (spec-correct, matches browsers); wordSpacing is untouched. Each subtract
+// is `advances -= letterSpacing`, a no-op when letterSpacing==0, so non-tracked text is unaffected.
+static const unsigned char LSP_ANCHOR[] = {
+    0x43,0x68, 0x18,0xBF, 0x05,0x68, 0xCA,0xEB,0x03,0x03, 0x18,0xBF,
+    0xCA,0xEB,0x05,0x05, 0x43,0x60, 0x18,0xBF, 0x05,0x60,
+};
+static const unsigned char LSP_A_ORIG[] = { 0xCA,0xEB,0x03,0x03 };   // rsb  r3,sl,r3  (space -= ls)
+static const unsigned char LSP_B_ORIG[] = { 0xCA,0xEB,0x05,0x05 };   // rsbne r5,sl,r5 (pre-space letter -= ls)
+static const unsigned char LSP_REPL[]   = { 0xAF,0xF3,0x00,0x80 };   // nop.w
 
 struct ntf_patch_t {
     const char *label; const char *incl, *excl;
@@ -578,6 +599,10 @@ static const struct ntf_fix_t NTF_JUSTIFY_FIXES[] = {
         { "expansion-target", "WebKit", "Widgets", PUN_ANCHOR, (int)sizeof(PUN_ANCHOR), (int)sizeof(PUN_ANCHOR), PUN_ORIG, PUN_REPL, (int)sizeof(PUN_ORIG) },
         { 0 },
     }, 1 },
+    { "letter-spacing on spaces (QTextEngine::shapeText)", "ntf_letterspace_spaces", true, {
+        { "letterspace:space",     "Gui", NULL, LSP_ANCHOR, (int)sizeof(LSP_ANCHOR), 6,  LSP_A_ORIG, LSP_REPL, (int)sizeof(LSP_A_ORIG) },
+        { "letterspace:preletter", "Gui", NULL, LSP_ANCHOR, (int)sizeof(LSP_ANCHOR), 12, LSP_B_ORIG, LSP_REPL, (int)sizeof(LSP_B_ORIG) },
+    }, 2 },
 };
 
 static const unsigned char *ntf_scan(const unsigned char *hay, size_t haylen,
@@ -1066,6 +1091,7 @@ static struct nh_hook NickelTypeFixHooks[] = {
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_setCurrentPage), .desc = "re-apply reader font per chapter", .optional = true },
+    // (letter-spacing on spaces is an in-memory byte patch, not a hook — see NTF_JUSTIFY_FIXES.)
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {

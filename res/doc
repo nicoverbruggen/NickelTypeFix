@@ -13,6 +13,8 @@ Fixes:
 - Justification skewing around dashes/quotes/ellipses; secondary fix.
 - Reader font falling back to the system font in a kepub chapter; the reading font is re-applied
   on each chapter so a chapter that drew before the font was ready gets corrected in place.
+- Letter-spacing (tracking) that widens the letters but not the spaces, so tracked text (a styled
+  title, say) runs its words together; the spaces are given the same tracking so words stay apart.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -23,6 +25,7 @@ Fixes:
 - ntf_justify_kospan:1     justified-kepub boundary fix (the main justify fix)
 - ntf_justify_punct:1      punctuation justification fix
 - ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
+- ntf_letterspace_spaces:1 give spaces the same letter-spacing as the letters (tracked text)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
 A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config

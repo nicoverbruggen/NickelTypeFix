@@ -17,7 +17,9 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 → corrects Qt's justifier so the boundary space gets its share.
 4. **Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
 → secondary justification fix.
-5. **Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
+5. **Letter-spacing not applied to spaces**: CSS `letter-spacing` (tracking) widens the letters but leaves the spaces, and the letter before each space, at their natural width, so any multi-word letter-spaced text (a heading, a styled caption, spaced small-caps, and so on) runs its words together. 
+→ patches Qt's text shaper so the spaces get the same tracking, the way browsers render it.
+6. **Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
 → re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
 
 ## Why was this made?
@@ -30,7 +32,7 @@ The point is to keep `optimizeLegibility` (which gets you ligatures, better text
 
 The first fix (glyph wobble) is the standout, and has been my personal pet peeve with Kobo's renderer. This fix is independent of everything below, needs no configuration, and is arguably the biggest single improvement the mod makes. It just works for every font. Yay!
 
-Fix 5 (reader-font fallback) is also independent: it has nothing to do with `optimizeLegibility` and just runs on its own for kepub books.
+Fix 6 (reader-font fallback) is also independent: it has nothing to do with `optimizeLegibility` and just runs on its own for kepub books.
 
 The justification and vertical-text fixes (2 to 4), by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering path is turned on. It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
 
@@ -75,6 +77,14 @@ Most noticeable: a starved gap at the sentence boundary (`justification   maths.
 |---|---|---|
 | ![justify original](docs/screenshots/justification-broken.png) | ![justify diff](docs/highlight/justify-diff.png) | ![justify fixed](docs/screenshots/justification-correct.png) |
 
+### 4. Letter-spacing on spaces fix
+
+CSS `letter-spacing` (tracking) spread the letters but left the spaces at their natural width, so a tracked chapter title ran its words together. The fix gives the spaces, and the letter before each space, the same tracking, so the words stay apart. The diff shows each glyph shifting right as the widened spaces push the following words along:
+
+| original | diff | fixed |
+|---|---|---|
+| ![letter-spacing original](docs/screenshots/letterspacing-broken.png) | ![letter-spacing diff](docs/highlight/letterspacing-diff.png) | ![letter-spacing fixed](docs/screenshots/letterspacing-correct.png) |
+
 ## Configuration
 
 Settings live in `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on
@@ -88,7 +98,8 @@ first boot; there's no shipped template file). Changes take effect on reboot.
 | `ntf_vertfix` | `1` | Fix 2 (vertical text). |
 | `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification, the main one). |
 | `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
-| `ntf_kepub_fontfix` | `1` | Fix 5 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
+| `ntf_letterspace_spaces` | `1` | Fix 5 (letter-spacing on spaces): give spaces the same letter-spacing as the letters, so letter-spaced words don't run together. `0` = stock. |
+| `ntf_kepub_fontfix` | `1` | Fix 6 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
 By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.
