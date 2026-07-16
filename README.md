@@ -110,7 +110,7 @@ Requires Kobo firmware **4.21+ (the 4.x series, which uses Qt 5.2 / QtWebKit / i
 
 **It does not work on 5.x (Qt6 / Chromium: no iType, no QtWebKit, and NickelHook doesn't load there).**
 
-The mod is not tied to any one model. The two in-memory patches related to justification anchor to position-independent instruction patterns, verified byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour).
+The mod is not tied to any one model. Its in-memory patches (the two justification fixes and the letter-spacing fix) anchor to position-independent instruction patterns rather than fixed addresses. The justification patterns are verified byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour); the letter-spacing pattern is verified on 4.45.
 
 ## Safety
 
@@ -128,7 +128,7 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 1. Hooked and looked-up symbols are optional: if a symbol isn't present on a given firmware, that fix does not run (instead of aborting the mod).
 
-2. If the justification fix can't locate its instruction pattern, or the bytes at a target site aren't what's expected, the fix logs and is skipped. When it does apply, all of its edits are located and verified up front and are written both-or-nothing (a mid-write failure rolls the already-patched sites back).
+2. If a byte-patch fix (justification or letter-spacing) can't locate its instruction pattern, or the bytes at a target site aren't what's expected, that fix logs and is skipped. When one does apply, all of its edits are located and verified up front and are written both-or-nothing (a mid-write failure rolls the already-patched sites back).
 
 3. The hinting fix carries a persistent `disabled-by-safety` marker: if `FT_Load_Glyph` is ever unexpectedly unavailable at runtime, it records the marker and passes glyphs through untouched on this and every later boot, leaving the vertical and justification fixes running.
 
@@ -136,7 +136,7 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 5. The reader-font fix publishes a new `KepubBookReader` only after its real constructor completes, tracks it through its destructor, and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
 
-6. Justification patches validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
+6. The in-memory patches (justification and letter-spacing) validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
 
 ## Build
 

@@ -2,9 +2,9 @@
 
 > *This document was researched and written with the assistance of **Claude Fable 5** (Anthropic), based on disassembly of the actual device firmware. The author reviewed everything and tested it on real hardware. Earlier revisions were assisted by Claude Opus 4.8 and GPT 5.5; see the note in the README.*
 
-NickelTypeFix corrects five text-rendering defects in Kobo's Qt 5.2 / QtWebKit / Monotype iType reader stack (firmware 4.x). Each fix is **independent**: it engages only if its seam is present on the running firmware, and otherwise logs and sits out. A mismatch in one fix never affects the others.
+NickelTypeFix corrects six text-rendering defects in Kobo's Qt 5.2 / QtWebKit / Monotype iType reader stack (firmware 4.x). Each fix is **independent**: it engages only if its seam is present on the running firmware, and otherwise logs and sits out. A mismatch in one fix never affects the others.
 
-Three of the fixes (1, 2, and 5) are **PLT hooks** (via NickelHook: it patches a library's `R_ARM_JUMP_SLOT` GOT entries, so it can intercept a *cross-library call* to an exported symbol). The other two (the justification fixes, 3 and 4) target functions that are **stripped/inlined** in the shipped binaries, leaving no symbol to hook, so they are applied as **in-memory byte patches** at startup (see [In-memory patching](#in-memory-patching)). Nothing is written to any device library on disk; every change is made in the process's memory at boot and is gone when the mod is removed. This is interoperability bugfixing: no Kobo, Qt, or Monotype code is redistributed.
+Three of the fixes (1, 2, and 6) are **PLT hooks** (via NickelHook: it patches a library's `R_ARM_JUMP_SLOT` GOT entries, so it can intercept a *cross-library call* to an exported symbol). The other three (the justification fixes 3 and 4, and the letter-spacing fix 5) target functions that are **stripped/inlined** in the shipped binaries, leaving no symbol to hook, so they are applied as **in-memory byte patches** at startup (see [In-memory patching](#in-memory-patching)). Nothing is written to any device library on disk; every change is made in the process's memory at boot and is gone when the mod is removed. This is interoperability bugfixing: no Kobo, Qt, or Monotype code is redistributed.
 
 All addresses/offsets below are for the `4.6.2` WebKit/Qt build; the in-memory fixes locate their targets by **pattern**, not by absolute address, so they hold across firmware builds that keep the same instruction sequence.
 
@@ -18,13 +18,13 @@ Books from the Kobo store use Kobo's own format instead: **kepub** (typically `*
 
 The trade-off is the engine itself. It is a QtWebKit build from roughly 2013, frozen into the firmware, so its rendering bugs will never be fixed upstream. Font rasterization is done by Monotype's iType rather than plain FreeType, which brings quirks of its own (Fix 1). This QtWebKit-plus-iType stack is what NickelTypeFix patches; the RMSDK epub renderer is a separate world and is not touched.
 
-One more piece of context: by default this engine lays text out on WebKit's "simple" path, which is fast but typographically basic. A hidden setting, `webkitTextRendering=optimizeLegibility`, moves it to the "complex" path, which unlocks real OpenType handling: ligatures, proper kerning, and hyphenation. The catch is that several long-standing kepub rendering bugs (broken vertical text, uneven justification) live precisely on that complex path, and they are the reason many readers leave the setting off. Fixes 2, 3, and 4 repair those bugs so the setting becomes safe to enjoy; Fixes 1 and 5 apply regardless of it.
+One more piece of context: by default this engine lays text out on WebKit's "simple" path, which is fast but typographically basic. A hidden setting, `webkitTextRendering=optimizeLegibility`, moves it to the "complex" path, which unlocks real OpenType handling: ligatures, proper kerning, and hyphenation. The catch is that several long-standing kepub rendering bugs (broken vertical text, uneven justification) live precisely on that complex path, and they are the reason many readers leave the setting off. Fixes 2, 3, and 4 repair those bugs so the setting becomes safe to enjoy; Fixes 1 and 6 apply regardless of it. Fix 5 (letter-spacing) applies wherever a book actually uses `letter-spacing`, which WebKit lays out on the complex path on its own, independent of the setting.
 
 ## In plain language
 
 If you're not a programmer, this section gives you the gist. The rest of the document tells the same story in full technical detail.
 
-**How the Kobo draws a book.** As the background section explains, kepub pages are drawn by the reader's built-in browser engine, and a font renderer turns the letter shapes into pixels. Each of the five fixes corrects one specific mistake in that pipeline.
+**How the Kobo draws a book.** As the background section explains, kepub pages are drawn by the reader's built-in browser engine, and a font renderer turns the letter shapes into pixels. Each of the six fixes corrects one specific mistake in that pipeline.
 
 **What "hooking" means.** The mod never edits the Kobo's software on disk. When the reader starts, the mod redirects a few of its internal calls to itself. It works like mail forwarding: a letter sent from one part of the reader to another arrives at the mod first, gets corrected, and is passed on. Remove the mod and the mail goes directly again.
 
@@ -148,7 +148,38 @@ Anchors (position-independent, unique in the binary):
 
 ---
 
-## Fix 5 — Reader-font fallback repair · `ntf_kepub_fontfix`
+## Fix 5 — Letter-spacing on spaces · `ntf_letterspace_spaces`
+
+**The bug.** CSS `letter-spacing` (tracking) widens the letters of a run but leaves the spaces, and the letter immediately before each space, at their natural width. So any multi-word letter-spaced text (a tracked heading, a styled caption, spaced small-caps) has its letters spread while its words run together. Browsers and the CSS Text spec add the tracking to spaces too.
+
+**Mechanism.** `QTextEngine::shapeText` (`libQtGui.so.4.6.2`) first adds `letterSpacing` to *every* glyph's advance, spaces included. It then runs a separate word/space loop that, for each space glyph, **subtracts** `letterSpacing` back off the space *and* the glyph before it, then adds `wordSpacing` to the space:
+
+```
+shapeText: advances_x[i] += letterSpacing   for every glyph i   (spaces included)
+then, for each glyph k whose HB_GlyphAttributes.justification is a space:
+    advances_x[k]   -= letterSpacing     <- the space loses its tracking
+    advances_x[k-1] -= letterSpacing     <- the letter before it loses its tracking
+    advances_x[k]   += wordSpacing
+```
+
+That subtraction is Qt's deliberate but non-spec "no tracking around whitespace," and it is exactly what leaves the word gaps narrow. It is unchanged across every Qt from 4.6 to 6.x; the CSS WG accepted a spec-correct "track spaces too" model ([csswg-drafts#10193](https://github.com/w3c/csswg-drafts/issues/10193)) but no shipping Qt/QtWebKit implements it. The drawn text really does come from this path: patching the add-loop alone changes nothing, patching these two subtracts changes the drawn advances, confirmed by rendering under a debugger.
+
+**The fix.** Two byte-pairs in that loop (`libQtGui.so.4.6.2`) that `nop.w` the two subtracts, so spaces and the pre-space letter keep the tracking `shapeText` already gave them. `wordSpacing` (added right after) is untouched, and each subtract is `advances -= letterSpacing`, a no-op when there is no letter-spacing, so ordinary text is byte-identical.
+
+| site | change | disasm | bytes |
+|---|---|---|---|
+| A | space keeps its tracking | `rsb r3,sl,r3` → `nop.w` | `ca eb 03 03` → `af f3 00 80` |
+| B | pre-space letter keeps its tracking | `rsbne r5,sl,r5` → `nop.w` | `ca eb 05 05` → `af f3 00 80` |
+
+Anchor (position-independent, unique in the binary), both edits at one site:
+
+- `43 68 18 bf 05 68 ca eb 03 03 18 bf ca eb 05 05 43 60 18 bf 05 60` (22 bytes); edit A at **anchor + 6**, edit B at **anchor + 12**.
+
+Both required, applied **both-or-nothing**. Validated in the offscreen render harness: for a letter-spaced title at `0.5em` (`+23px`), the drawn advances go from tracking every glyph *except* the spaces and the letter before each space, to tracking all of them (each space `12px → 35px`, each pre-space letter regaining its `+23px`), with `word-spacing` still landing on top. Zero regression on text without letter-spacing (the subtract is a no-op there; a plain justified page renders identically). Gated by `ntf_letterspace_spaces`; if the anchor isn't found (or is ambiguous, or the bytes differ), neither edit is written.
+
+---
+
+## Fix 6 — Reader-font fallback repair · `ntf_kepub_fontfix`
 
 **The bug.** In a kepub book, a chapter's text sometimes renders in the system (fallback) font instead of the chosen reading font, and stays that way on page turns; only changing the font or reopening the book clears it.
 
@@ -172,7 +203,7 @@ page turns within the chapter: nothing armed → nothing done
 
 ## In-memory patching
 
-Fixes 3–4 target functions with no exported symbol, so they can't use `nh_hook`/`nh_dlsym`. Instead, at NickelHook `init` the mod:
+Fixes 3, 4, and 5 target functions with no exported symbol, so they can't use `nh_hook`/`nh_dlsym`. Instead, at NickelHook `init` the mod:
 
 1. **Locates the loaded library** with `dl_iterate_phdr`, matching the object by name (e.g. contains `Gui`, or `WebKit` but not `Widgets`) and taking its executable `PT_LOAD` segment. If the lib isn't mapped yet it is `dlopen`'d first.
 2. **Pattern-scans** that segment for the fix's position-independent **anchor** byte sequence, accumulating matches across all matching objects.
@@ -183,8 +214,8 @@ A fix's edits are all located and verified before *any* is written (both-or-noth
 
 ## Firmware tolerance & safety
 
-- The in-memory anchors were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge, so the same patches hold across the device line. If a future build re-encodes the target, the anchor simply won't match and the fix sits out.
-- The hooks (Fixes 1, 2, and 5) bind exact symbols and are `optional`; a rename makes that fix inert.
+- The justification anchors (Fixes 3, 4) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge, so the same patches hold across the device line; the letter-spacing anchor (Fix 5) is verified on 4.45. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
+- The hooks (Fixes 1, 2, and 6) bind exact symbols and are `optional`; a rename makes that fix inert.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - Logging is quiet by default: a healthy boot writes nothing to `nickel-type-fix.log`. Problems (a fix that can't apply, a failed write, a safety trip, a mistake in the config file) are always logged, and a config mistake also switches full verbose logging on for that boot. Set `ntf_log:1` to log everything, so a single boot shows which fixes engaged.
 - Nothing is written to any device library on disk; a boot without the mod is stock.
