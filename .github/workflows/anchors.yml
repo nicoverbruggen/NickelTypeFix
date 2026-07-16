@@ -6,7 +6,7 @@ name: Anchors
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
