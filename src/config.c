@@ -104,6 +104,95 @@ static void ntf_config_write_default(void) {
     NTF_LOG("wrote built-in default config to %s/config", NTF_CONFIG_DIR_DISP);
 }
 
+// Self-heal: after loading an existing config, append any known keys the file is missing (keys a
+// newer version added, so an upgrading user never got them). The user's file is copied byte-for-byte
+// and only the missing keys are appended, each with its baked-in default from ntf_config_keys and a
+// short comment. Existing lines are never modified, reordered, or rewritten, so a user's own values
+// are preserved exactly. If nothing is missing, nothing is written. The write is atomic (unique temp
+// file, flushed, then renamed into place), mirroring ntf_config_write_default() so a power cut can't
+// leave a truncated config behind.
+static void ntf_config_append_missing(ntf_config_t *cfg) {
+    // Parse what's present first: a key already in the loaded config is not missing.
+    bool any_missing = false;
+    for (size_t i = 0; ntf_config_keys[i].key; i++)
+        if (!ntf_config_get(cfg, ntf_config_keys[i].key)) { any_missing = true; break; }
+    if (!any_missing)
+        return;
+
+    char tmp[1024];
+    int n = snprintf(tmp, sizeof(tmp), NTF_CONFIG_DIR "/config.tmp.%ld", (long)getpid());
+    if (n < 0 || (size_t)n >= sizeof(tmp)) {
+        NTF_LOG("warning: config path is too long to add missing keys");
+        return;
+    }
+
+    // Reopen the file to copy it verbatim, so the appended block is added to the exact bytes on disk.
+    FILE *src = fopen(NTF_CONFIG_DIR "/config", "r");
+    if (!src) {
+        NTF_LOG("warning: could not reopen %s/config to add missing keys (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        return;
+    }
+
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        NTF_LOG("warning: could not add missing keys to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        fclose(src);
+        return;
+    }
+    FILE *dst = fdopen(fd, "w");
+    if (!dst) {
+        int saved_errno = errno;
+        close(fd);
+        unlink(tmp);
+        fclose(src);
+        NTF_LOG("warning: could not add missing keys to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(saved_errno));
+        return;
+    }
+
+    // Copy the user's file unchanged. Track the last byte so the appended block starts on its own
+    // line even if the file did not end with a newline.
+    bool ok = true;
+    char cpbuf[4096];
+    size_t r;
+    int last = '\n';
+    while ((r = fread(cpbuf, 1, sizeof(cpbuf), src)) > 0) {
+        last = (unsigned char)cpbuf[r - 1];
+        if (fwrite(cpbuf, 1, r, dst) != r) { ok = false; break; }
+    }
+    if (ok && ferror(src)) ok = false;
+    fclose(src);
+
+    if (ok && last != '\n' && fputc('\n', dst) == EOF) ok = false;
+    if (ok && fputs("\n# --- keys added by a newer NickelTypeFix version (defaults shown; edit to disable) ---\n", dst) < 0) ok = false;
+    for (size_t i = 0; ok && ntf_config_keys[i].key; i++) {
+        if (ntf_config_get(cfg, ntf_config_keys[i].key))
+            continue;
+        if (fprintf(dst, "# %s\n%s:%s\n", ntf_config_keys[i].comment, ntf_config_keys[i].key, ntf_config_keys[i].value) < 0)
+            ok = false;
+    }
+
+    if (ok && fflush(dst) != 0) ok = false;
+    if (ok && fsync(fileno(dst)) != 0) ok = false;
+    if (fclose(dst) != 0) ok = false;
+    if (!ok) {
+        NTF_LOG("warning: could not add missing keys to %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        unlink(tmp);
+        return;
+    }
+    if (rename(tmp, NTF_CONFIG_DIR "/config") != 0) {
+        NTF_LOG("warning: could not install updated %s/config (%s)", NTF_CONFIG_DIR_DISP, strerror(errno));
+        unlink(tmp);
+        return;
+    }
+    // Best effort: make the rename durable, same as the default-config write.
+    int dir_fd = open(NTF_CONFIG_DIR, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
+    NTF_LOG("added missing keys to %s/config", NTF_CONFIG_DIR_DISP);
+}
+
 ntf_config_t *ntf_config_parse(void) {
     ntf_config_t *cfg = (ntf_config_t*)calloc(1, sizeof(ntf_config_t));
     if (!cfg)
@@ -151,8 +240,8 @@ ntf_config_t *ntf_config_parse(void) {
         }
 
         bool known = false;
-        for (size_t i = 0; ntf_known_keys[i]; i++)
-            if (!strcmp(key, ntf_known_keys[i])) { known = true; break; }
+        for (size_t i = 0; ntf_config_keys[i].key; i++)
+            if (!strcmp(key, ntf_config_keys[i].key)) { known = true; break; }
         if (!known) {
             ntf_config_problem = true;
             NTF_LOG("warning: %s/config: line %d: unknown setting '%s' (it does nothing — likely a typo; the doc file lists the valid settings)", NTF_CONFIG_DIR_DISP, lineno, key);
@@ -173,6 +262,11 @@ ntf_config_t *ntf_config_parse(void) {
     if (ntf_config_bool(cfg, "ntf_log", false) || ntf_config_problem)
         for (ntf_config_entry_t *e = cfg->head; e; e = e->next)
             NTF_LOG("config: %s = %s", e->key, e->val);
+
+    // The file existed and was parsed (this is the normal load path as well as right after a fresh
+    // default was written). Top it up with any keys a newer version added but this file lacks. On a
+    // fresh write the template already has them all, so this is a no-op there.
+    ntf_config_append_missing(cfg);
     return cfg;
 }
 

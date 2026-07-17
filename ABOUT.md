@@ -215,6 +215,16 @@ Fail-safe throughout: a font with no GPOS table, no `cpsp`, an unreadable path (
 
 ---
 
+## Fix 8 — Reader-font family quoting · `ntf_quote_fontfamily`
+
+**The bug.** A reading font whose family name has a whitespace-separated token that starts with a digit (`Source Serif 4`, `Helvetica 75`, `Bitter 24pt`) silently doesn't apply: the text draws in the default font instead, and paging does not fix it. The usual workaround is to rename the font so the number goes away.
+
+**Mechanism.** When Kobo applies your reading font to a kepub, `KepubBookReader::pageStyleCss` builds a rule from a fixed template, `* { font-family: %1 !important; }`, and substitutes the raw family name into `%1` with no quotes. For `Source Serif 4` that yields `font-family: Source Serif 4 !important`, which is invalid CSS: an unquoted `font-family` value is a list of identifiers, and an identifier cannot begin with a digit, so the token `4` is illegal and WebKit drops the whole declaration. The font itself is registered correctly (Kobo loads it into `QFontDatabase` under its true family), so this is purely a quoting oversight. The reader even quotes a hardcoded sibling rule (`rt { font-family: 'Sans-SerifJP' !important; }`) a few bytes away; it just never quotes the dynamic reader rule.
+
+**The fix.** The injected reader CSS flows through `WebkitView::addCssToHtml` (already hooked, `_ZN10WebkitView12addCssToHtmlE7QString`). Before the original runs, the hook scans the stylesheet for each `font-family: <value> !important` declaration and, when the value is not already quoted, wraps it in double quotes, so `Source Serif 4` becomes `"Source Serif 4"` and applies. It leaves already-quoted values alone (so the hardcoded `'Sans-SerifJP'` rule is untouched), skips comma-separated fallback lists and bare CSS generics (`serif`, `sans-serif`, `monospace`, and so on) which have to stay unquoted, and is idempotent. If the toggle is off or nothing matches, the stylesheet passes through byte-for-byte, and the whole pass runs inside the hook's existing exception guard.
+
+---
+
 ## In-memory patching
 
 Fixes 3, 4, and 5 target functions with no exported symbol, so they can't use `nh_hook`/`nh_dlsym`. Instead, at NickelHook `init` the mod:

@@ -10,6 +10,7 @@
 //   5. Reader-font fallback  — re-apply the reader-font CSS per kepub chapter (libnickel)   [ntf_kepub_fontfix]
 //   6. Letter-spacing spaces — in-memory patch, QTextEngine::shapeText (libQtGui)      [ntf_letterspace_spaces]
 //   7. Capital spacing (cpsp) — strip the cpsp feature per font at load, any font (libnickel/QFontDatabase)  [ntf_cpsp_fix]
+//   8. Reader-font quoting   — quote the injected reader-font family so digit-token names hold (libnickel)   [ntf_quote_fontfamily]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 5 use NickelHook PLT hooks;
 // fixes 3–4 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -95,11 +96,22 @@ ntf_justify_punct:1
 # visible. 0 = off.
 ntf_kepub_fontfix:1
 
+# Fix 6 - letter-spacing on spaces: when text uses letter-spacing (tracking), Kobo widens the letters
+# but not the spaces, so a tracked title runs its words together. This gives the spaces the same
+# tracking so words stay apart. 0 = off.
+ntf_letterspace_spaces:1
+
 # Fix 7 - capital spacing (cpsp): some fonts carry an OpenType 'cpsp' (Capital Spacing) feature meant
 # only for all-caps text. Kobo's reader applies it to ordinary body text too, pushing every capital
 # away from the next letter (a loose gap after a capital, e.g. the D in "Docks"). This removes cpsp
 # from each font as it loads, for any font. Kerning and every other feature are left untouched. 0 = off.
 ntf_cpsp_fix:1
+
+# Fix 8 - reader-font quoting: in a kepub book, Kobo injects your reading font with an unquoted CSS
+# rule. If the font's family name has a word that starts with a digit (e.g. "Roboto 2", "Bitter 24pt"),
+# that rule is invalid CSS and the reader silently falls back to its default font. This quotes the
+# family name so such fonts apply. A normal font name is unaffected. 0 = off.
+ntf_quote_fontfamily:1
 
 # Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
 # that can't apply, a failed write, a safety trip) are always logged regardless, and a problem in this
@@ -108,13 +120,25 @@ ntf_cpsp_fix:1
 ntf_log:0
 )CFG";
 
-// The valid config keys, for the parser's unknown-key warning. Kept directly below the default
-// config above so the two lists can't drift apart: a key added there must be added here.
-extern "C" const char *const ntf_known_keys[] = {
-    "ntf_enabled", "ntf_no_hinting", "ntf_hinting_allowlist", "ntf_vertfix",
-    "ntf_justify_kospan", "ntf_justify_punct", "ntf_kepub_fontfix",
-    "ntf_letterspace_spaces", "ntf_cpsp_fix", "ntf_log",
-    NULL,
+// The valid config keys, their baked-in default values, and a one-line description each. Kept
+// directly below the default config above so the two can't drift apart: a key added there must be
+// added here. This table drives the parser's unknown-key warning and the self-heal in config.c that
+// appends keys a newer version added to an existing file. Each value here MUST match the default the
+// code reads for that key (see the ntf_*_config_bool/get call sites): every fix defaults on, ntf_log
+// off. The compact comments come from res/doc.
+extern "C" const ntf_config_key_t ntf_config_keys[] = {
+    { "ntf_enabled",            "1", "master switch; 0 = do nothing" },
+    { "ntf_no_hinting",         "1", "Fix 1 - glyph \"wobble\" fix; 0 = stock rendering" },
+    { "ntf_hinting_allowlist",  "",  "comma-separated families to leave hinted, e.g. Georgia, Kobo Nickel" },
+    { "ntf_vertfix",            "1", "Fix 2 - vertical (tategaki) text fix" },
+    { "ntf_justify_kospan",     "1", "Fix 3 - justified-kepub boundary fix (the main justify fix)" },
+    { "ntf_justify_punct",      "1", "Fix 4 - punctuation justification fix" },
+    { "ntf_kepub_fontfix",      "1", "Fix 5 - reader-font fallback fix; re-applies the reading font per kepub chapter" },
+    { "ntf_letterspace_spaces", "1", "Fix 6 - give spaces the same letter-spacing as the letters (tracked text)" },
+    { "ntf_cpsp_fix",           "1", "Fix 7 - strip cpsp so capitals aren't spaced apart in body text (any font)" },
+    { "ntf_quote_fontfamily",   "1", "Fix 8 - quote the injected reader-font family so digit-token names apply" },
+    { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
+    { NULL, NULL, NULL },
 };
 
 // ================= FIX 1: hinting "wobble" (libkobo / FT_Load_Glyph) =================
@@ -1312,6 +1336,70 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
     if (real_cwv_setWritingDirection) real_cwv_setWritingDirection(self, dir);
 }
 
+// ================= FIX 8: reader-font quoting (libnickel / injected CSS) =================
+// Kepub reader-font CSS is injected from the unquoted template `* { font-family: %1 !important; }`
+// (KepubBookReader::pageStyleCss substitutes the raw family into %1). If the family name has a
+// whitespace-separated token that starts with a digit (e.g. "Roboto 2", "Helvetica 75", "Bitter 24pt"),
+// the emitted `font-family: Roboto 2 !important` is invalid CSS (an unquoted identifier can't start
+// with a digit), so WebKit drops the declaration and the reader falls back to its default font. That
+// this is a quoting oversight is visible in the same binary, which hard-codes a QUOTED sibling rule
+// `rt { font-family: 'Sans-SerifJP' !important; }`. The font is registered in QFontDatabase under its
+// true family, so the fix is simply to quote the family in the injected rule. Applied to the same
+// addCssToHtml `css` copy the other CSS fixes use, before the real call.
+static bool ntf_quote_fontfamily() { return ntf_global_config_bool("ntf_quote_fontfamily", true); }
+
+// True if `value` is a bare CSS generic family keyword. A generic must NOT be quoted: quoting turns it
+// into a (non-existent) family-name lookup, which would break it. Case-insensitive; the -webkit- prefix
+// covers WebKit's vendor generics (e.g. -webkit-body).
+static bool ntf_css_generic_family(const QString &value) {
+    static const char *const generics[] = {
+        "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", NULL,
+    };
+    for (int i = 0; generics[i]; i++)
+        if (value.compare(QLatin1String(generics[i]), Qt::CaseInsensitive) == 0) return true;
+    return value.startsWith(QLatin1String("-webkit-"), Qt::CaseInsensitive);
+}
+
+// Wrap the value of every `font-family: <value> !important` declaration in `css` in double quotes,
+// where <value> is a single unquoted family name. The reader rule has exactly this shape (value
+// terminated by !important); a value terminated by ';' or '}' before any !important is a different
+// declaration and is left alone. Skips a value that is already quoted (leaves 'Sans-SerifJP' intact),
+// a comma-separated fallback list, or a bare generic keyword. Only ever inserts two quote chars around
+// an unquoted value, so re-running on its own output is a no-op (the already-quoted skip makes it
+// idempotent). A real family name never contains a double-quote char, so double quotes are safe.
+static void ntf_quote_reader_fontfamily(QString &css) {
+    const QString prop = QLatin1String("font-family:");
+    const QString bang = QLatin1String("!important");
+    int from = 0;
+    while (true) {
+        int p = css.indexOf(prop, from, Qt::CaseInsensitive);
+        if (p < 0) break;
+        int vstart = p + prop.length();
+        int bpos = css.indexOf(bang, vstart, Qt::CaseInsensitive);
+        if (bpos < 0) break;                                   // no !important-terminated value left
+        // Only treat this as the reader rule if nothing ends the declaration before !important.
+        bool terminated = false;
+        for (int i = vstart; i < bpos; i++) {
+            QChar c = css.at(i);
+            if (c == QLatin1Char(';') || c == QLatin1Char('}')) { terminated = true; break; }
+        }
+        if (terminated) { from = vstart; continue; }
+        int vs = vstart, ve = bpos;                            // trim to the value between colon and !important
+        while (vs < ve && css.at(vs).isSpace()) vs++;
+        while (ve > vs && css.at(ve - 1).isSpace()) ve--;
+        if (vs >= ve) { from = bpos + bang.length(); continue; }   // empty value
+        QChar first = css.at(vs);
+        QString value = css.mid(vs, ve - vs);
+        bool skip = first == QLatin1Char('\'') || first == QLatin1Char('"')   // already quoted
+                    || value.contains(QLatin1Char(','))                       // fallback list
+                    || ntf_css_generic_family(value);                         // bare generic keyword
+        if (skip) { from = bpos + bang.length(); continue; }
+        css.insert(ve, QLatin1Char('"'));
+        css.insert(vs, QLatin1Char('"'));
+        from = bpos + 2 + bang.length();                       // two quotes added before !important
+    }
+}
+
 // FIX 5 — arm the per-chapter re-inject. WebkitView::addCssToHtml is called when a chapter injects its
 // font CSS (once per chapter load; not on plain page turns), which is our per-chapter, font-agnostic
 // "a fresh chapter drew" signal. Our own re-inject also calls this (via KepubBookReader::addCssToHtml),
@@ -1345,6 +1433,13 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
             bool append = tracked && !css->contains(QString::fromLatin1(NTF_VERT_RULE));
             NTF_DBG("addCssToHtml wv=%p cwv=%p tracked=%d append=%d", self, cwv, tracked ? 1 : 0, append ? 1 : 0);
             if (append) css->append(QLatin1Char('\n')).append(QString::fromLatin1(NTF_VERT_RULE));
+        }
+        // FIX 8: quote the injected reader-font family so a digit-token name (e.g. "Roboto 2") stays
+        // valid CSS instead of being dropped. Runs last so it composes with the fixes above: it only
+        // touches font-family declarations, leaving Fix 2's appended text-rendering rule alone, and a
+        // non-matching or already-quoted `css` passes through byte-for-byte.
+        if (ntf_enabled() && ntf_quote_fontfamily() && css) {
+            ntf_quote_reader_fontfamily(*css);
         }
     } catch (...) {
         // Contain Qt allocation failures (see _ntf_cwv_setWritingDirection);

@@ -23,6 +23,8 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 → re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
 7. **Capital spacing (`cpsp`) applied to body text**: some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps runs, but the reader applies it everywhere, so every capital is pushed away from the letter after it (a loose gap after the `D` in `Docks`). 
 → strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing; kerning and other features are untouched.
+8. **Fonts with a number in the name not applying** (for example `Source Serif 4`, `Helvetica 75`, `Bitter 24pt`): the reader drops your reading font into the page as an *unquoted* CSS rule, so a family name with a space before a digit is invalid CSS, gets discarded, and the text silently falls back to the default font. 
+→ quotes the injected font-family so any family name, numbered ones included, applies. No more renaming fonts to work around it.
 
 ## Why was this made?
 
@@ -100,6 +102,11 @@ Some fonts carry the OpenType `cpsp` (Capital Spacing) feature, meant only for a
 Settings live in `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on
 first boot; there's no shipped template file). Changes take effect on reboot.
 
+Every fix is on unless you turn it off: a key that isn't in your config takes its default, which is why the
+config only ever needs to list the things you want to disable. When you update the mod, any keys added by the
+new version are appended to your existing config on the next boot, with your own settings left untouched, so new
+fixes arrive enabled and the file stays complete without you editing anything.
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `ntf_enabled` | `1` | Master switch. `0` = behaves as if not installed. |
@@ -111,6 +118,7 @@ first boot; there's no shipped template file). Changes take effect on reboot.
 | `ntf_letterspace_spaces` | `1` | Fix 5 (letter-spacing on spaces): give spaces the same letter-spacing as the letters, so letter-spaced words don't run together. `0` = stock. |
 | `ntf_kepub_fontfix` | `1` | Fix 6 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_cpsp_fix` | `1` | Fix 7 (capital spacing): strip the `cpsp` feature so capitals aren't spaced apart in body text. Works for any font. `0` = stock. |
+| `ntf_quote_fontfamily` | `1` | Fix 8 (font-family quoting): quote the injected reader font-family so families with a number in the name (`Source Serif 4`, `Bitter 24pt`) still apply. `0` = stock. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
 By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.
