@@ -1094,6 +1094,7 @@ static bool ntf_uninstall() {
     ok = ntf_del(NTF_CONFIG_DIR "/doc") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/config") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/nickel-type-fix.log") && ok;
+    ok = ntf_del(NTF_CONFIG_DIR "/nickel-type-fix.log.old") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/disabled-by-safety") && ok;
     ok = ntf_del(NTF_CONFIG_DIR "/uninstall") && ok;
     if (access(NTF_CONFIG_DIR, F_OK) == 0) ok = nh_delete_dir(NTF_CONFIG_DIR) && ok;

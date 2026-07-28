@@ -14,6 +14,13 @@ extern "C" {
 
 #include <NickelHook.h>
 
+// Cap the on-device log so it can't grow without bound across many boots. On the first write of
+// a boot, if the log is larger than this it's rotated to a single ".old" generation. A healthy
+// boot writes nothing, so this is reached only by a long-lived or verbose device.
+#ifndef NTF_LOG_MAX_BYTES
+#define NTF_LOG_MAX_BYTES (256 * 1024)
+#endif
+
 __attribute__((unused)) static inline char *strtrim(char *s) {
     if (!s)
         return NULL;
@@ -37,6 +44,17 @@ __attribute__((unused)) static inline void ntf_log_file_line(const char *file, i
     nh_log("%s (%s:%d)", msg, file, line);
 
     mkdir(NTF_CONFIG_DIR, 0755);
+
+    // Rotate once per process, on the first file write of the boot. A benign race if two threads
+    // hit this first (at most a redundant rename); the flag keeps it to one check per process.
+    static bool ntf_log_rotate_checked = false;
+    if (!ntf_log_rotate_checked) {
+        ntf_log_rotate_checked = true;
+        struct stat st;
+        if (stat(NTF_CONFIG_DIR "/nickel-type-fix.log", &st) == 0 && st.st_size > NTF_LOG_MAX_BYTES)
+            rename(NTF_CONFIG_DIR "/nickel-type-fix.log", NTF_CONFIG_DIR "/nickel-type-fix.log.old");
+    }
+
     FILE *f = fopen(NTF_CONFIG_DIR "/nickel-type-fix.log", "a");
     if (!f)
         return;

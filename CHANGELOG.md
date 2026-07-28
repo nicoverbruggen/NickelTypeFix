@@ -6,9 +6,14 @@
 
 - **Fonts with a number in the name now apply** (`ntf_quote_fontfamily`, on by default): a reading font whose family name has a word starting with a digit (`Source Serif 4`, `Helvetica 75`, `Bitter 24pt`) silently fell back to the default font. Kobo drops your reading font into the page as an unquoted CSS rule (`font-family: Source Serif 4 !important`), which is invalid CSS because an unquoted family can't start a word with a digit, so WebKit discarded the whole declaration. The mod now quotes the injected family name, so any font applies and there's no need to rename fonts to work around it. It leaves already-quoted rules and generic families alone. Turn it off with `ntf_quote_fontfamily:0`.
 
+### Fixed
+
+- **A failed startup now removes every hook it installed.** Rollback looked hooks up in `libnickel` only, so hooks placed in the Qt and WebKit libraries stayed active after the mod had stopped. It now uses the library each hook was installed in. Comes from a NickelHook update.
+
 ### Improved
 
 - **New settings are added to your config automatically on update.** The config file is still created once on first boot, but when a later version introduces a key it is now appended to your existing config on the next boot, with your own settings left untouched. New fixes arrive enabled (an absent key always takes its default, which is on for every fix), so the file stays complete and self-documenting without any editing on your part.
+- **The log file is now size-capped.** Once it passes 256 KB it rotates to `nickel-type-fix.log.old`, so leaving `ntf_log:1` on can't fill up your device.
 
 ## v0.7
 
