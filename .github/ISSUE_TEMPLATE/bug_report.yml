@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a problem with NickelTypeFix
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The log file is required — the mod logs
+        its version, your firmware version, your config, and which hooks attached, which is
+        usually most of the diagnosis.
+
+  - type: input
+    id: device
+    attributes:
+      label: Kobo device
+      description: The exact model.
+      placeholder: e.g. Kobo Clara BW
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: "Settings > Device information > Software version."
+      placeholder: e.g. 4.45.23697
+    validations:
+      required: true
+
+  - type: input
+    id: modversion
+    attributes:
+      label: NickelTypeFix version
+      description: The release you installed (or the commit if you built it yourself).
+      placeholder: e.g. v0.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: >
+        Connect the Kobo over USB and attach `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log`
+        (drag & drop it here, or paste its contents). If the problem is subtle, set
+        `ntf_log:1` in `KOBOeReader/.adds/nickel-type-fix/config`, reboot, reproduce the
+        problem, and attach the log from that boot.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I rebooted the device after installing / changing the config.
+          required: true
+        - label: "`ntf_enabled` is not set to `0` in my config."
+          required: true

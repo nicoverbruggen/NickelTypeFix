@@ -9,3 +9,4 @@ nhplugin.json
 
 # anchor-check firmware cache (downloaded, not committed)
 test/anchors/corpus/
+test.syms
