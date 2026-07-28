@@ -1016,15 +1016,20 @@ static int ntf_init() {
     ntf_global_config_get("");                      // prime config before any hook can read it
     if (first_install)
         ntf_remove_superseded();                    // stop the old standalone mods co-loading
-    if (!ntf_enabled()) { NTF_DBG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
-    NTF_DBG("NickelTypeFix started. Fixes turned on -> glyph wobble: %s, vertical text: %s, justification: %s, reader font: %s.",
-        ntf_no_hinting() ? "yes" : "no",
-        ntf_vertfix() ? "yes" : "no",
-        (ntf_global_config_bool("ntf_justify_kospan", true) || ntf_global_config_bool("ntf_justify_punct", true)) ? "yes" : "no",
-        ntf_kepub_fontfix() ? "yes" : "no");
+    // Startup block, always logged: mod version, firmware version, effective config, and (below)
+    // the resolved-symbol map. This is what makes a user-attached log diagnostic on an unknown
+    // firmware, so it must not depend on ntf_log:1 or on the mod being enabled.
+    NTF_LOG("startup: NickelTypeFix " NH_VERSION);
+    ntf_log_firmware();
+    NTF_LOG("startup: enabled=%d fixes(wobble/vertical/justify/readerfont)=%d/%d/%d/%d verbose=%d",
+        ntf_enabled(), ntf_no_hinting(), ntf_vertfix(),
+        (ntf_global_config_bool("ntf_justify_kospan", true) || ntf_global_config_bool("ntf_justify_punct", true)),
+        ntf_kepub_fontfix(), ntf_log());
+
+    if (!ntf_enabled()) { NTF_LOG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
 
     // FIX 2 (vertical): learn the vertical-writing-mode enum values from Nickel itself.
-    NTF_DBG("vertical/reader syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p kepubDtor=%p kepubWebkitThunk=%p wdFromString=%p",
+    NTF_LOG("startup: vertical/reader syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p kepubDtor=%p kepubWebkitThunk=%p wdFromString=%p",
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
         (void *)ntf_getUserStyleSheetUrl, (void *)ntf_wv_webView, (void *)real_kepubReaderCtor,
         (void *)real_kepubReaderDtor, (void *)ntf_kepubReaderWebkitDtorThunk,
