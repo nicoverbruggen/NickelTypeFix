@@ -1183,21 +1183,29 @@ static struct nh_hook NickelTypeFixHooks[] = {
     // FIX 2 — optional.
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
+    //libnickel 4.21.15015 * _ZN13CustomWebView19setWritingDirectionE16WritingDirection
     // FIX 5 — reader-font fallback repair: the ctor resets per-book state; arm on the per-chapter
     // font-CSS injection, re-inject on the next page-set. All optional (a missing symbol just sits
     // the fix out).
     { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 5: reset per-book state", .optional = true },
+    //libnickel 4.21.15015 * _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
     { .sym = "_ZN15KepubBookReaderD1Ev", .sym_new = "_ntf_kepubReaderDtor",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderDtor), .desc = "fix 5: clear destroyed reader state", .optional = true },
+    //libnickel 4.21.15015 * _ZN15KepubBookReaderD1Ev
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
+    //libnickel 4.21.15015 * _ZN10WebkitView12addCssToHtmlE7QString
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_setCurrentPage), .desc = "re-apply reader font per chapter", .optional = true },
+    //libnickel 4.21.15015 * _ZN10WebkitView14setCurrentPageEi
     // (letter-spacing on spaces is an in-memory byte patch, not a hook — see NTF_JUSTIFY_FIXES.)
     // FIX 7 — capital spacing: strip cpsp from each reader font as it's registered. Optional; a
     // missing symbol just sits the fix out. QFontDatabase::addApplicationFont is a Qt import in
-    // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo.
+    // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo. It carries no symbol
+    // annotation on purpose: the symbol is imported, not defined here, so it has no offset in
+    // libnickel, and test/syms (which resolves symbols to offsets) would report it missing on
+    // every firmware.
     { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
     // FIX 7 (embedded fonts) — TO BE TESTED LATER. WebKit constructs a QRawFont from epub @font-face

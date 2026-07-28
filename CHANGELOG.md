@@ -14,6 +14,7 @@
 
 - **New settings are added to your config automatically on update.** The config file is still created once on first boot, but when a later version introduces a key it is now appended to your existing config on the next boot, with your own settings left untouched. New fixes arrive enabled (an absent key always takes its default, which is on for every fix), so the file stays complete and self-documenting without any editing on your part.
 - **The log file is now size-capped.** Once it passes 256 KB it rotates to `nickel-type-fix.log.old`, so leaving `ntf_log:1` on can't fill up your device.
+- **The log now says which build and firmware it ran on.** Every boot writes a short startup block whether or not `ntf_log:1` is set, so a log you attach to a bug report is useful without having to turn anything on and reproduce the problem again.
 
 ## v0.7
 
