@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: NickelTypeFix
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pgaskin/nickeltc:1.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0        # full history so `git describe` stamps the tag as the version
+          submodules: true
+
+      - name: Build
+        run: make clean all strip koboroot
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: NickelTypeFix
+          path: |
+            KoboRoot.tgz
+            src/libnickeltypefix.so
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: NickelTypeFix
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 == "## " tag { found = 1; next }
+            found && /^## /  { exit }
+            found            { print }
+          ' CHANGELOG.md > release-notes.md
+
+          # The CHANGELOG is the authoritative source for release notes: refuse to
+          # publish a release whose section is missing or empty.
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error file=CHANGELOG.md::No '## $GITHUB_REF_NAME' section found in CHANGELOG.md — add one before tagging."
+            exit 1
+          fi
+
+          {
+            echo
+            echo "---"
+            echo
+            echo "**Install:** copy \`KoboRoot.tgz\` to the Kobo's hidden \`.kobo\` folder, eject, and reboot. Settings are in \`.adds/nickel-type-fix/config\` ([configuration reference](https://github.com/$GITHUB_REPOSITORY#configuration))."
+            echo
+            echo "**Requires software version 4.21+ (4.x only; does not work on 5.x).** The vertical-text and justification fixes only matter with \`optimizeLegibility\` enabled; the wobble fix works out of the box. See the [prerequisite section](https://github.com/$GITHUB_REPOSITORY#prerequisite-enable-optimizelegibility)."
+            echo
+            echo "**Uninstall:** delete \`.adds/nickel-type-fix/uninstall\` and reboot. Nothing is ever written to any system library on disk, and a boot failsafe disables the mod automatically if anything goes wrong ([safety details](https://github.com/$GITHUB_REPOSITORY#safety))."
+          } >> release-notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          name: NickelTypeFix ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: KoboRoot.tgz
