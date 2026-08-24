@@ -89,17 +89,17 @@ ntf_justify_kospan:1
 # Fix 4 - justification around punctuation (em/en dashes, ellipses, curly quotes).
 ntf_justify_punct:1
 
-# Fix 5 - reader-font fallback: in a kepub book, a chapter's text sometimes renders in the system
+# Fix 5 - letter-spacing on spaces: when text uses letter-spacing (tracking), Kobo widens the letters
+# but not the spaces, so a tracked title runs its words together. This gives the spaces the same
+# tracking so words stay apart. 0 = off.
+ntf_letterspace_spaces:1
+
+# Fix 6 - reader-font fallback: in a kepub book, a chapter's text sometimes renders in the system
 # (fallback) font instead of your chosen reading font, because the font was not ready the moment the
 # chapter first drew. This re-applies your reading font on each chapter so the text can't stay stuck on
 # the fallback. It only affects kepub books, and on a chapter that is already correct it does nothing
 # visible. 0 = off.
 ntf_kepub_fontfix:1
-
-# Fix 6 - letter-spacing on spaces: when text uses letter-spacing (tracking), Kobo widens the letters
-# but not the spaces, so a tracked title runs its words together. This gives the spaces the same
-# tracking so words stay apart. 0 = off.
-ntf_letterspace_spaces:1
 
 # Fix 7 - capital spacing (cpsp): some fonts carry an OpenType 'cpsp' (Capital Spacing) feature meant
 # only for all-caps text. Kobo's reader applies it to ordinary body text too, pushing every capital
@@ -382,7 +382,7 @@ static void ntf_vert_views_flush(void) {
 // Feature accessors keep configuration policy readable at call sites and make
 // the intended default explicit next to each implementation.
 static bool ntf_vertfix() { return ntf_global_config_bool("ntf_vertfix", true); }
-// Fix 5: reader-font fallback repair (on by default).
+// Fix 6: reader-font fallback repair (on by default).
 static bool ntf_kepub_fontfix() { return ntf_global_config_bool("ntf_kepub_fontfix", true); }
 
 // Update the one user-stylesheet URL slot owned by this CustomWebView. Callers
@@ -454,7 +454,7 @@ static ntf_vert_slot_t ntf_vert_slot(void *cwv, QString *css, bool *decodable) {
     return css->contains(QString::fromLatin1(NTF_VERT_RULE)) ? NTF_SLOT_HAS_RULE : NTF_SLOT_FOREIGN;
 }
 
-// ================= FIX 5: reader-font fallback repair (libnickel) =================
+// ================= FIX 6: reader-font fallback repair (libnickel) =================
 // In a kepub book the reading font is applied as an injected `* { font-family:'<font>' !important; }`
 // rule (KepubBookReader::pageStyleCss -> addCssToHtml) resolved against a QFontDatabase application
 // font. If the font isn't ready the instant a chapter first draws, that chapter renders its text in a
@@ -534,38 +534,49 @@ static void ntf_do_reinject(void *reader, int page) {
     ntf_kbr_addCssToHtml(reader, &css);
 }
 
-// Future-firmware fallback: called from the WebkitView CSS-injection hook only
-// when the resolve-time `_ZThn24_` thunk was absent (so the +24 layout is not
-// proven for this firmware) and no view has been learned for the live reader
-// yet. `self` is the WebkitView receiving addCssToHtml; it is the reader's own
-// view iff it is a base subobject of the live KepubBookReader. Prove that from
-// the C++ ABI instead of assuming a layout: the candidate offset must have a
-// matching this-adjusting destructor thunk in libnickel, AND that exact thunk
-// must appear in the vtable the candidate subobject actually points at — which
-// ties the offset to this object's dynamic type, not to a lookalike heap
-// neighbour (a different complete object's vtable never contains another
-// class's `_ZThn` destructor thunks). Every failure path leaves Fix 5 inert
-// for the book; this can delay the fix on an unknown firmware but can never
-// aim a call at the wrong object. GUI-thread only (callers hold the guard).
+// Learn the reader's view: called from the WebkitView CSS-injection hook while
+// a reader is live and no view has been learned for it yet. `self` is the
+// WebkitView receiving addCssToHtml; it is the reader's own view iff it is a
+// base subobject of the live KepubBookReader. Prove that from the C++ ABI
+// instead of assuming a layout, per candidate offset:
+//   - offset 0 (WebkitView is the primary base — the 4.45.23697 layout): the
+//     un-thunked complete-object destructor `_ZN15KepubBookReaderD1Ev` must
+//     appear in the vtable the candidate points at. Only the reader's own
+//     primary subobject carries that vtable.
+//   - offset > 0: a matching this-adjusting destructor thunk `_ZThn<off>_...`
+//     must exist in libnickel AND appear in the candidate subobject's vtable —
+//     which ties the offset to this object's dynamic type, not to a lookalike
+//     heap neighbour (a different complete object's vtable never contains
+//     another class's `_ZThn` destructor thunks).
+// Every failure path leaves Fix 6 inert for the book; this can delay the fix
+// on an unknown firmware but can never aim a call at the wrong object.
+// GUI-thread only (callers hold the guard).
 static bool ntf_learn_reader_view(void *self) {
     if (!ntf_kepub_reader || !self) return false;
     uintptr_t base = (uintptr_t)ntf_kepub_reader, cand = (uintptr_t)self;
-    if (cand <= base) return false;                    // offset 0 (primary base) has no thunk to prove it
+    if (cand < base) return false;
     uintptr_t off = cand - base;
     if (off > 1024 || off % 4 != 0) return false;      // sane single-object layouts only
-    char sym[64];
-    int n = snprintf(sym, sizeof(sym), "_ZThn%u_N15KepubBookReaderD1Ev", (unsigned)off);
-    if (n < 0 || (size_t)n >= sizeof(sym)) return false;
-    static void *libnickel = dlopen("libnickel.so.1.0.0", RTLD_LAZY | RTLD_NOLOAD);
-    if (!libnickel) return false;
-    void *thunk = dlsym(libnickel, sym);
-    if (!thunk) return false;
+    void *proof;                                       // the destructor entry the vtable must carry
+    if (off == 0) {
+        // The primary-base case has no thunk; the proof is the complete-object
+        // destructor itself, already resolved for the destructor hook.
+        proof = (void *)real_kepubReaderDtor;
+    } else {
+        char sym[64];
+        int n = snprintf(sym, sizeof(sym), "_ZThn%u_N15KepubBookReaderD1Ev", (unsigned)off);
+        if (n < 0 || (size_t)n >= sizeof(sym)) return false;
+        static void *libnickel = dlopen("libnickel.so.1.0.0", RTLD_LAZY | RTLD_NOLOAD);
+        if (!libnickel) return false;
+        proof = dlsym(libnickel, sym);
+    }
+    if (!proof) return false;
     // The destructor sits within the first few virtual slots for every class in
     // this hierarchy; 12 bounds the scan while staying inside the vtable.
     void **vtable = *(void ***)self;
     if (!vtable) return false;
     for (int i = 0; i < 12; i++) {
-        if (vtable[i] == thunk) {
+        if (vtable[i] == proof) {
             ntf_kepub_reader_view = self;
             NTF_DBG("Reader-font fix: discovered the reader's view at offset +%u on this firmware.", (unsigned)off);
             return true;
@@ -1184,14 +1195,14 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
     //libnickel 4.21.15015 * _ZN13CustomWebView19setWritingDirectionE16WritingDirection
-    // FIX 5 — reader-font fallback repair: the ctor resets per-book state; arm on the per-chapter
+    // FIX 6 — reader-font fallback repair: the ctor resets per-book state; arm on the per-chapter
     // font-CSS injection, re-inject on the next page-set. All optional (a missing symbol just sits
     // the fix out).
     { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
-      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 5: reset per-book state", .optional = true },
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 6: reset per-book state", .optional = true },
     //libnickel 4.21.15015 * _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
     { .sym = "_ZN15KepubBookReaderD1Ev", .sym_new = "_ntf_kepubReaderDtor",
-      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderDtor), .desc = "fix 5: clear destroyed reader state", .optional = true },
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderDtor), .desc = "fix 6: clear destroyed reader state", .optional = true },
     //libnickel 4.21.15015 * _ZN15KepubBookReaderD1Ev
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
@@ -1274,12 +1285,11 @@ void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
     if (!real_kepubReaderCtor) return;
     real_kepubReaderCtor(self, pluginState, widget);
     if (on_qt) {
-        ntf_kepub_reader = self;   // complete KepubBookReader; now safe for Fix 5 to call
-        // The +24 layout holds only on firmware where the resolve-time thunk
-        // proved it; otherwise the view stays unknown until the first font-CSS
-        // injection learns it (ntf_learn_reader_view).
-        ntf_kepub_reader_view = ntf_kepubReaderWebkitDtorThunk
-            ? (void *)((char *)self + NTF_KEPUB_WEBKIT_OFFSET) : nullptr;
+        ntf_kepub_reader = self;   // complete KepubBookReader; now safe for Fix 6 to call
+        // The view starts unknown for every book and is learned (with an ABI
+        // proof) from the first font-CSS injection — ntf_learn_reader_view.
+        // Assuming an offset here is exactly the v0.5 mistake that disarmed
+        // this fix; see the history note at the state block.
     }
 }
 // The destructor is the lifetime boundary for the opaque reader pointer above.
@@ -1423,10 +1433,11 @@ extern "C" __attribute__((visibility("default")))
 void _ntf_wv_addCssToHtml(void *self, QString *css) {
     try {
         // WebkitView is shared by dictionary/store/browser views.  Only a call on
-        // the current KepubBookReader may arm Fix 5; otherwise a later page change
-        // could route a non-reader event into the reader-font methods. On firmware
-        // where the +24 layout is unproven the reader's view starts out unknown
-        // and the first injection while a reader is live tries to learn it.
+        // the current KepubBookReader may arm Fix 6; otherwise a later page change
+        // could route a non-reader event into the reader-font methods. The
+        // reader's view starts out unknown for every book, and the first
+        // injection while a reader is live learns it with an ABI proof
+        // (ntf_learn_reader_view) — offset 0 included.
         if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && !ntf_in_fixonturn
             && ntf_on_qt_thread()
             && (ntf_kepub_reader_view == self
