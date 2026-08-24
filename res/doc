@@ -11,15 +11,22 @@ Fixes:
 - Justified kepubs with uneven gaps at sentence boundaries under optimizeLegibility (the main
   one); fixed in Qt's justifier.
 - Justification skewing around dashes/quotes/ellipses; secondary fix.
-- Reader font falling back to the system font in a kepub chapter; the reading font is re-applied
-  on each chapter so a chapter that drew before the font was ready gets corrected in place.
 - Letter-spacing (tracking) that widens the letters but not the spaces, so tracked text (a styled
   title, say) runs its words together; the spaces are given the same tracking so words stay apart.
+- Reader font falling back to the system font in a kepub chapter; the reading font is re-applied
+  on each chapter so a chapter that drew before the font was ready gets corrected in place.
 - Capital spacing (cpsp): a feature meant only for all-caps text, applied to ordinary text too, so
   capitals get an oddly wide gap after them; stripped from each font as it loads, for any font.
 - Reader font whose family name has a word starting with a digit ("Roboto 2", "Bitter 24pt")
   silently dropped because Kobo injects it as unquoted, invalid CSS; the family name is quoted so it
   applies.
+- Page-boundary probe (diagnostic, off by default): logs how the reader places each kepub page
+  boundary, for the "characters cut off at page edges" investigation. Pages are still cut exactly
+  as stock; only the log gains detail.
+- Page-boundary clipping fix (off by default while it is field-validated): a kepub page boundary
+  that cuts through a line of a sideloaded reading font is moved into the gap between the lines,
+  so letter tops/bottoms aren't shaved at page edges. It measures the font's real letter shapes
+  and leaves every boundary it cannot prove safe exactly as stock.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -29,10 +36,12 @@ Fixes:
 - ntf_vertfix:1            vertical (tategaki) text fix
 - ntf_justify_kospan:1     justified-kepub boundary fix (the main justify fix)
 - ntf_justify_punct:1      punctuation justification fix
-- ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
 - ntf_letterspace_spaces:1 give spaces the same letter-spacing as the letters (tracked text)
+- ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
 - ntf_cpsp_fix:1           strip cpsp so capitals aren't spaced apart in body text (any font)
 - ntf_quote_fontfamily:1   quote the injected reader-font family so digit-token names apply
+- ntf_pagecut_probe:0      log kepub page-boundary placement (diagnostic; pages cut exactly as stock)
+- ntf_pagecut_fix:0        keep kepub page boundaries out of the letters (needs a sideloaded font)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
 A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config
