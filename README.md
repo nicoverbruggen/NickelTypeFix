@@ -110,6 +110,12 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 |---|---|---|
 | ![page-boundary original](docs/screenshots/pagecut-broken.png) | ![page-boundary diff](docs/highlight/pagecut-diff.png) | ![page-boundary fixed](docs/screenshots/pagecut-correct.png) |
 
+### Fixes #10 and #11: Centred images and drop caps
+
+| original | diff | fixed |
+|---|---|---|
+| ![openers original](docs/screenshots/opener-broken.png) | ![openers diff](docs/highlight/opener-diff.png) | ![openers fixed](docs/screenshots/opener-correct.png) |
+
 ## Configuration
 
 Settings are read from `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on the first boot; there's no shipped template file). Changes take effect on reboot.
