@@ -167,7 +167,7 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_cpsp_fix",           "1", "Fix 7 - strip cpsp so capitals aren't spaced apart in body text (any font)" },
     { "ntf_quote_fontfamily",   "1", "Fix 8 - quote the injected reader-font family so digit-token names apply" },
     { "ntf_page_probe",         "0", "debug: report what the page actually contains, so a fix can be aimed" },
-    { "ntf_dropcap_fix",        "0", "Fix 11 - stop an oversized drop cap pushing the next line down" },
+    { "ntf_dropcap_fix",        "1", "Fix 11 - stop an oversized drop cap pushing the next line down" },
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
     { "ntf_pagecut_trim",       "1", "Fix 9 - trim kepub line boxes so they never overlap and page edges stay clean (any font)" },
     { "ntf_pagecut_probe",      "0", "Fix 9 diagnostic - log the kepub line boxes and page-boundary placement (pages are cut exactly as without it)" },
