@@ -1,122 +1,108 @@
 # NickelTypeFix
 
-A [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack. 
+This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack.
 
-Each fix is independent and fail-safe. Individual fixes engage only if they can safely be applied, or otherwise don't apply. You can disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
+Each fix is independent and fail-safe. Individual fixes apply only if they can safely be applied. You can also disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
 
 > [!IMPORTANT]
 > This mod works on Kobo software version **4.x only** (inert on 5.x). See [Compatibility](#compatibility) for more information about compatibility.
 
 ## What it fixes
 
-Nine defects, grouped by what they affect. The numbers are stable identifiers: they match the Fix numbers in [ABOUT.md](ABOUT.md) and the order the fixes were added, not their importance.
-
 ### How glyphs are drawn
 
-- **Fix 1 · Glyph "wobble"**: letters that drift a pixel up/down, giving an uneven line, on fonts with no hinting instructions. 
-→ loads unhinted fonts, so iType stops grid-fitting inconsistently.
-- **Fix 7 · Capital spacing (`cpsp`) applied to body text**: some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps runs, but the reader applies it everywhere, so every capital is pushed away from the letter after it (a loose gap after the `D` in `Docks`). 
-→ strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing; kerning and other features are untouched.
+| The problem | What the mod does | Fix |
+| --- | --- | --: |
+| Letters drift a pixel up or down, so the baseline looks uneven. Most fonts are affected. | Loads the font unhinted, which bypasses the problem. | **#1** |
+| Some fonts have `cpsp` metadata baked in, a feature meant only for all-caps runs. The reader applies it to body text too. This makes fonts look spaced incorrectly. | Strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing. Kerning and other features are untouched. | **#7** |
 
 ### How text is spaced on a line
 
-These three only do anything with `optimizeLegibility` turned on (see below).
+These three only work when `optimizeLegibility` has been turned on (see below).
 
-- **Fix 3 · Justified kepubs breaking at sentence boundaries** (uneven gaps). the main justification fix. 
-→ corrects Qt's justifier so the boundary space gets its share.
-- **Fix 4 · Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
-→ secondary justification fix.
-- **Fix 5 · Letter-spacing not applied to spaces**: CSS `letter-spacing` (tracking) widens the letters but leaves the spaces, and the letter before each space, at their natural width, so any multi-word letter-spaced text (a heading, a styled caption, spaced small-caps, and so on) runs its words together. 
-→ patches Qt's text shaper so the spaces get the same tracking, the way browsers render it.
+| The problem | What the mod does | Fix |
+| --- | --- | --: |
+| Justified kepubs break at sentence boundaries, leaving uneven gaps. The main justification fix. | Corrects Qt's justifier so the boundary space gets its share. | **#3** |
+| Justification skews around punctuation: em and en dashes, ellipses, curly quotes. | Justification is fixed by fixing how text is laid out. | **#4** |
+| `letter-spacing` widens the letters but leaves the spaces at their natural width, so tracked text (a heading, a styled caption, spaced small-caps) runs its words together. | Patches Qt's text shaper so the spaces get the same tracking, the way browsers render it. | **#5** |
 
 ### How a page is laid out
 
-- **Fix 2 · Vertical (tategaki) CJK text** rendering sideways/misplaced under `optimizeLegibility`. 
-→ keeps vertical books on WebKit's correct rendering path.
-- **Fix 9 · A page edge cutting through a line of text**, leaving a thin strip of letter tops at the bottom of the page. 
-→ trims the boxes the reader breaks pages with so they can't overlap, and it moves the line onto the next page whole. Works with any font.
+| The problem | What the mod does | Fix |
+| --- | --- | --: |
+| Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
+| Sometimes lines of text seem to be cut off and spread across two page turns. | Trims the boxes the reader breaks pages with so they can't overlap, then moves the line onto the next page whole. Works with any font. | **#9** |
 
 ### Which font you actually get
 
-- **Fix 6 · Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
-→ re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
-- **Fix 8 · Fonts with a number in the name not applying**, like `Source Serif 4` or `Bitter 24pt`: the text silently falls back to the default font. 
-→ quotes the font name the reader injects, so numbered families work without renaming them.
+| The problem | What the mod does | Fix |
+| --- | --- | --: |
+| Changing the font (or size) can break under some circumstances, which (incorrectly) reverts to the system font as a result. | Re-applies your reading font on every chapter, so a chapter that drew before the font was ready gets corrected in place. | **#6** |
+| Fonts with a number in the name (like `Source Serif 4`) silently fall back to the default font. | Quotes the font name the reader injects, so numbered families work without renaming them. | **#8** |
 
 ## Why was this made?
 
-**This fixes what is usually broken when you enable `optimizeLegibility`, which is justification and vertical CJK text.**
+**The built-in reader application for Kobo devices has some rendering issues, especially when you enable `optimizeLegibility`. This mod aims to fix most rendering bugs in the reader application.**
 
 The point is to keep `optimizeLegibility` (which gets you ligatures, better text rendering, and optionally hyphenation) without any bugs. The cause of the bugs and the mechanism for each fix is [documented here](ABOUT.md).
 
-## Prerequisite: enable `optimizeLegibility`
+Oh, and there's a few other fixes, too!
 
-The first fix (glyph wobble) is the standout, and has been my personal pet peeve with Kobo's renderer. This fix is independent of everything below, needs no configuration, and is arguably the biggest single improvement the mod makes. It just works for every font. Yay!
+## What is `optimizeLegibility`?
 
-Fix 6 (reader-font fallback) is also independent: it has nothing to do with `optimizeLegibility` and just runs on its own for kepub books.
+It's a way to make your Kobo display advanced typography features, like ligatures and hyphenation. Unfortunately, it's kind of buggy, but this mod fixes that.
 
-The justification and vertical-text fixes (2 to 4), by contrast, only do anything when Kobo's WebKit **`optimizeLegibility`** text-rendering path is turned on. It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
+It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
 
     [Reading]
     webkitTextRendering=optimizeLegibility
 
-Then reboot. With this off, the vertical and justification fixes will correctly log that they engaged, but you won't see a difference because the broken render path is never taken. You now get the following with `optimizeLegibility` set:
+After doing that, reboot. You now get the following with `optimizeLegibility` set:
 
 - Working GPOS functionality w/ fonts (improved tracking and kerning)
 - Hyphenation and ligatures (advanced font features)
-- Working justification (*fixed with this mod)
-- Working vertical text rendering (*fixed with this mod)
+- Working justification (fixed with this mod)
+- Working vertical text rendering (fixed with this mod)
 
 ## Screenshots
 
-These are actual page captures from the author's own **Kobo Clara BW** before and after installing the mod.
+These are actual page captures from my own **Kobo Clara BW** before and after installing the mod.
 
-The middle **diff** overlays the two: **red** is ink the fix removed (its old position), **green** is ink the fix added (its new position), white is unchanged. This way, the effect is obvious even where it's subtle on the page.
+The middle **diff** overlays the two: **red** is ink the fix removed (its old position), **green** is ink the fix added (its new position), white is unchanged.
 
-### Fix 1 — Glyph "wobble"
+(This way, the effect is obvious even where it's subtle on the page.)
 
-Letters can drift exactly one pixel off the baseline; the diff lights up nearly every glyph the unhinting re-rasterizes:
+### Fix #1: Glyph "wobble" (uneven baseline)
 
 | original | diff | fixed |
 |---|---|---|
 | ![wobble original](docs/screenshots/wobble.png) | ![wobble diff](docs/highlight/wobble-diff.png) | ![wobble fixed](docs/screenshots/wobble-free.png) |
 
-### Fix 2 — Vertical (tategaki) CJK text
-
-CJK punctuation (`、` `。`) and small kana float centered in the
-cell instead of tucking to the top-right where vertical Japanese needs them:
+### Fix #2: Vertical (tategaki) CJK text
 
 | original | diff | fixed |
 |---|---|---|
 | ![vertical original](docs/screenshots/cjk-broken.png) | ![vertical diff](docs/highlight/cjk-diff.png) | ![vertical fixed](docs/screenshots/cjk-correct.png) |
 
-### Fix 3 — Justified text at koboSpan boundaries
-
-Most noticeable: a starved gap at the sentence boundary (`justification   maths.`) with the rest of the line over-stretched, vs. even word spacing:
+### Fix #3: Justified text at koboSpan boundaries
 
 | original | diff | fixed |
 |---|---|---|
 | ![justify original](docs/screenshots/justification-broken.png) | ![justify diff](docs/highlight/justify-diff.png) | ![justify fixed](docs/screenshots/justification-correct.png) |
 
-### Fix 5 — Letter-spacing on spaces
-
-CSS `letter-spacing` (tracking) spread the letters but left the spaces at their natural width, so a tracked chapter title ran its words together. The fix gives the spaces, and the letter before each space, the same tracking, so the words stay apart. The diff shows each glyph shifting right as the widened spaces push the following words along:
+### Fix #5: Letter-spacing on spaces
 
 | original | diff | fixed |
 |---|---|---|
 | ![letter-spacing original](docs/screenshots/letterspacing-broken.png) | ![letter-spacing diff](docs/highlight/letterspacing-diff.png) | ![letter-spacing fixed](docs/screenshots/letterspacing-correct.png) |
 
-### Fix 7 — Capital spacing (cpsp)
-
-Some fonts carry the OpenType `cpsp` (Capital Spacing) feature, meant only for all-caps text, and the reader applies it to ordinary body text too, so every capital is pushed away from the letter after it and that extra space spreads across the whole line. The fix removes `cpsp`, so capitals sit at their normal spacing again. Because a capital shifts everything after it, the diff lights up whole lines pulling tighter (red is the looser original, green the corrected position), and further down the page the text re-flows as words no longer get pushed to the next line:
+### Fix #7: Capital spacing (cpsp)
 
 | original | diff | fixed |
 |---|---|---|
 | ![capital spacing original](docs/screenshots/cap-broken.png) | ![capital spacing diff](docs/highlight/cap-diff.png) | ![capital spacing fixed](docs/screenshots/cap-correct.png) |
 
-### Fix 9 — Page-boundary clipping
-
-The reader breaks a page using one box per line, and those boxes are a little taller than the gap between the lines, so they overlap and a break can land inside a line. The fix trims the overlap away, and the reader then moves the line onto the next page whole. At the bottom of the original below, that thin strip is one pixel of a cut line; with the fix it is a whole line of text. The diff is entirely green because this fix only ever puts back ink the page edge had removed.
+### Fix #9: Page-boundary clipping
 
 | original | diff | fixed |
 |---|---|---|
@@ -124,38 +110,46 @@ The reader breaks a page using one box per line, and those boxes are a little ta
 
 ## Configuration
 
-Settings live in `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on
-first boot; there's no shipped template file). Changes take effect on reboot.
+Settings are read from `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on the first boot; there's no shipped template file). Changes take effect on reboot.
 
-Every fix is on unless you turn it off: a key that isn't in your config takes its default, which is why the
-config only ever needs to list the things you want to disable. When you update the mod, any keys added by the
-new version are appended to your existing config on the next boot, with your own settings left untouched, so new
-fixes arrive enabled and the file stays complete without you editing anything.
+**Every fix is on by default, unless you turn it off**: a key that isn't in your config uses its default (on), which is why the config only ever needs to list the things you want to disable.
+
+When you update the mod, any keys added by the new version are appended to your existing config on the next boot, with your own settings left untouched, so new fixes arrive enabled and the file stays complete without you editing anything.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `ntf_enabled` | `1` | Master switch. `0` = behaves as if not installed. |
-| `ntf_no_hinting` | `1` | Fix 1 (wobble): load glyphs unhinted. `0` = stock. |
-| `ntf_hinting_allowlist` | *(empty)* | Comma-separated font families to keep natively hinted, e.g. `Georgia, Kobo Nickel`. |
-| `ntf_vertfix` | `1` | Fix 2 (vertical text). |
-| `ntf_justify_kospan` | `1` | Fix 3 (koboSpan-boundary justification, the main one). |
-| `ntf_justify_punct` | `1` | Fix 4 (punctuation justification). |
-| `ntf_letterspace_spaces` | `1` | Fix 5 (letter-spacing on spaces): give spaces the same letter-spacing as the letters, so letter-spaced words don't run together. `0` = stock. |
-| `ntf_kepub_fontfix` | `1` | Fix 6 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
-| `ntf_cpsp_fix` | `1` | Fix 7 (capital spacing): strip the `cpsp` feature so capitals aren't spaced apart in body text. Works for any font. `0` = stock. |
-| `ntf_quote_fontfamily` | `1` | Fix 8 (font-family quoting): quote the injected reader font-family so families with a number in the name (`Source Serif 4`, `Bitter 24pt`) still apply. `0` = stock. |
-| `ntf_pagecut_trim` | `1` | Fix 9 (page-boundary clipping): trim each kepub line box a few pixels so no line box overlaps the next, which stops the reader slicing a line of text at a page edge; it moves the whole line onto the next page instead. Measures nothing about the font, so it works with any font, Kobo's built-in ones and publisher-default books included. |
-| `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
+| `ntf_enabled` | `1` | Master switch. `0` behaves as if the mod isn't installed. |
+| `ntf_no_hinting` | `1` | Fix #1: load glyphs unhinted. |
+| `ntf_hinting_allowlist` | *(empty)* | Families to keep natively hinted, comma-separated, e.g. `Georgia, Kobo Nickel`. |
+| `ntf_vertfix` | `1` | Fix #2: vertical (tategaki) text. |
+| `ntf_justify_kospan` | `1` | Fix #3: justification at koboSpan boundaries, the main one. |
+| `ntf_justify_punct` | `1` | Fix #4: justification around punctuation. |
+| `ntf_letterspace_spaces` | `1` | Fix #5: give spaces the same letter-spacing as the letters. |
+| `ntf_kepub_fontfix` | `1` | Fix #6: re-apply the reading font on each kepub chapter. |
+| `ntf_cpsp_fix` | `1` | Fix #7: strip `cpsp` so capitals aren't spaced apart in body text. |
+| `ntf_quote_fontfamily` | `1` | Fix #8: quote the injected font family so numbered names apply. |
+| `ntf_pagecut_trim` | `1` | Fix #9: trim the line boxes so a page edge can't cut through a line. |
+| `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
-By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.
+Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.
 
 ## Compatibility
 
-Requires Kobo firmware **4.21+ (the 4.x series, which uses Qt 5.2 / QtWebKit / iType)**. 
+Requires Kobo **software version 4.21+**. 
 
-**It does not work on 5.x (Qt6 / Chromium: no iType, no QtWebKit, and NickelHook doesn't load there).**
+**This mod <u>does not work on 5.x</u>, which is currently available in Europe as an accessibility preview at the time of writing.**
 
-The mod is not tied to any one model. Its in-memory patches (the two justification fixes and the letter-spacing fix) anchor to position-independent instruction patterns rather than fixed addresses, and all three are verified present and byte-identical across the 4.38 and 4.45 firmware branches (Sage, Elipsa, Libra 2, Clara 2E … and Clara BW/Colour, Libra Colour), even though those libraries otherwise diverge and the patterns sit at different offsets in each.
+> [!TIP]
+> If you are on v5.x, I recommend downgrading and installing this mod instead, for an optimal reading experience.
+
+This mod is not tied to any specific model, it works on most Kobo devices on the right software version.
+
+For example, you can install it on:
+
+- Older devices, which run the 4.38 branch (at the time of writing)
+- Newer devices, which run the 4.46 branch (at the time of writing)
+
+The in-memory patches anchor to position-independent instruction patterns rather than fixed addresses, and all three are verified present and byte-identical across the 4.38, 4.45 and 4.46 firmware branches.
 
 ## Safety
 
@@ -185,12 +179,16 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 ## Build
 
-Install Podman/Docker and build with NickelTC:
+You don't need to build this yourself. You can just download [the latest release](https://github.com/nicoverbruggen/kobopatch-webui/releases). But if you want to, here are the instructions.
+
+To build the mod, you will need to use Docker or Podman, and build with the `NickelTC`. For convenience, I've included a build script:
 
 ```sh
 git submodule update --init
-./build.sh          # → KoboRoot.tgz + src/libnickeltypefix.so
+./build.sh
 ```
+
+This generates a `KoboRoot.tgz` file.
 
 ## Install
 
@@ -200,22 +198,13 @@ Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. The mod sho
 
 Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
 
-## Notes
-
-On the first boot after installation, the mod also removes the older standalone mods it supersedes so they don't co-load. You probably won't be impacted, as these were mostly used by the author and distributed to only a handful of people before this mod was released.
-
-Specifically, the following files are deleted (if present):
-
-- `/usr/local/Kobo/imageformats/libnickelhintfix.so`
-- `/usr/local/Kobo/imageformats/libnickeljustifyfix.so`
-- `KOBOeReader/.adds/nickelhintfix/` (config directory)
-- `KOBOeReader/.adds/nickeljustifyfix/` (config directory)
-
-Nothing else is ever removed, and this cleanup does not run on later boots.
-
 ## Development
 
-This repository was created with the assistance of large language models (specifically, Claude Opus 4.8, GPT 5.5, and Claude Fable 5). All of it was carefully reviewed by the author, and tested on the author's actual Kobo devices before release.
+This repository was made with the assistance of large language models. Specifically: Anthropic's Opus 4.8, Opus 5 and Fable 5, as well as OpenAI's GPT 5.5 and 5.6 Sol. 
+
+These models were incredibly useful when attempting to reverse engineer and diagnose the actual issues. 
+
+All of the mod was carefully reviewed by the author, and was developed and tested on the author's actual Kobo devices prior to release.
 
 ## License
 
