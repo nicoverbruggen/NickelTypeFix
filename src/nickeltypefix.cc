@@ -134,7 +134,13 @@ ntf_pagecut_trim:1
 # one holding the image. This centres an image that is the whole content of its block by its
 # margins instead, which the alignment setting cannot override. Text alignment is unaffected.
 ntf_center_images:1
-ntf_dropcap_fix:0
+
+# Fix 11 - drop caps: a large initial letter at the start of a chapter takes part in its own line,
+# so that line grows to hold it and the line beneath is pushed down, leaving the first two lines of
+# the paragraph further apart than every pair after them. This stops the drop cap inflating its
+# line, early enough that the reader counts the chapter's pages from the corrected layout. A drop
+# cap the book floats is already correct and is left alone.
+ntf_dropcap_fix:1
 
 # Fix 9 diagnostic - page-boundary probe (off by default): log how the reader lays out and then cuts
 # a kepub page - the line boxes before and after the trim above, and where each page boundary ended
