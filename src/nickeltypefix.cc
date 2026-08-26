@@ -345,6 +345,21 @@ static void ntf_hint_disable_for_safety(const char *reason) {
     if (!__atomic_exchange_n(&ntf_hint_log_dumped, true, __ATOMIC_RELAXED)) nh_dump_log();
 }
 
+// --- Fix 1 hook body. Serves this fix alone.
+// FIX 1 — hinting. Independent: if disabled-by-safety, only hinting passes through.
+extern "C" __attribute__((visibility("default")))
+FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_flags) {
+    if (!real_FT_Load_Glyph) { ntf_hint_disable_for_safety("real FT_Load_Glyph was NULL"); return 1; }
+    if (__atomic_load_n(&ntf_hint_disabled, __ATOMIC_RELAXED)
+        || ntf_hint_marker_state() != NTF_HINT_MARKER_ABSENT)
+        return real_FT_Load_Glyph(face, glyph_index, load_flags);
+    // Orthogonal to iType's CSM stem-weighting (Font Weight) — that's set before the load.
+    FT_Int32 eff = load_flags;
+    if (ntf_enabled() && ntf_no_hinting() && !ntf_font_hinting_allowed(face))
+        eff |= NTF_FT_LOAD_NO_HINTING;
+    return real_FT_Load_Glyph(face, glyph_index, eff);
+}
+
 // ================= FIX 2: vertical (tategaki) text (libnickel) =================
 static int  (*ntf_writingDirectionFromString)(const QString &) = nullptr;
 static void *(*ntf_cwv_settings)(void *cwv) = nullptr;
@@ -622,6 +637,34 @@ static bool ntf_learn_reader_view(void *self) {
         }
     }
     return false;
+}
+
+// --- Fix 6 hook body. Serves this fix alone.
+// FIX 6 — consume: on the first setCurrentPage after a chapter drew (armed above), re-apply the
+// reader-font CSS into the live document. If the chapter rendered its text in a substitute because the
+// font was not ready in time, this re-resolves it in place; if the chapter is already correct the
+// re-apply renders the identical font and is invisible.
+extern "C" __attribute__((visibility("default")))
+void _ntf_wv_setCurrentPage(void *self, int page) {
+    if (real_wv_setCurrentPage) real_wv_setCurrentPage(self, page);
+    // Consume only on the same live reader/view that armed the flag.  The
+    // destructor normally clears ntf_kepub_reader; the identity checks also
+    // make a missing destructor hook fail safe by sitting Fix 6 out.
+    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_chapter_needs_fix
+        && self == ntf_chapter_view && self == ntf_kepub_reader_view && !ntf_in_fixonturn
+        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_on_qt_thread()) {
+        ntf_chapter_needs_fix = false;
+        ntf_chapter_view = nullptr;
+        ntf_in_fixonturn = true;
+        try {
+            ntf_do_reinject(ntf_kepub_reader, page);
+        } catch (...) {
+            // Contain Qt allocation failures: skipping one chapter's re-apply
+            // just leaves that chapter with stock behavior.
+            NTF_LOG("Note: the reader-font fix skipped one chapter after an internal error (likely low memory).");
+        }
+        ntf_in_fixonturn = false;
+    }
 }
 
 // ================= FIX 9: kepub page-boundary clipping (libnickel) =================
@@ -1709,6 +1752,48 @@ static bool ntf_strip_cpsp(uint8_t *data, size_t len) {
     return changed;
 }
 
+// --- Fix 7 hook body. Serves this fix alone.
+// addApplicationFont is static int(const QString&); via NickelHook it's a plain int(const QString*).
+static int (*real_addApplicationFont)(const QString *) = nullptr;
+
+// FIX 7 — capital spacing. Intercept every reader-font registration, drop cpsp from the font in
+// memory, and register the edited bytes via addApplicationFontFromData. Best-effort: on ANY problem
+// we call the real addApplicationFont with the original path, so a font always loads. Only fonts we
+// actually change take the from-data path (minimal blast radius); everything else loads stock. The
+// try/catch contains Qt allocation failures — an exception escaping an extern "C" hook would
+// std::terminate Nickel.
+extern "C" __attribute__((visibility("default")))
+int _ntf_addApplicationFont(const QString *fileName) {
+    if (!real_addApplicationFont) return -1;
+    // No thread guard here (this hook must not become the guard's first claimant): registration
+    // happens at boot and on library rescans, when no reader is paginating.
+    if (!ntf_enabled() || !ntf_cpsp_fix() || !fileName) return real_addApplicationFont(fileName);
+    try {
+        QByteArray path = fileName->toLocal8Bit();
+        FILE *f = fopen(path.constData(), "rb");
+        if (!f) return real_addApplicationFont(fileName);   // Qt resource path / unreadable: stock load
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return real_addApplicationFont(fileName); }
+        long sz = ftell(f);
+        if (sz <= 0 || sz > 32 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f); return real_addApplicationFont(fileName);
+        }
+        QByteArray buf;
+        buf.resize((int)sz);
+        size_t got = fread(buf.data(), 1, (size_t)sz, f);
+        fclose(f);
+        if (got != (size_t)sz) return real_addApplicationFont(fileName);
+        if (!ntf_strip_cpsp(reinterpret_cast<uint8_t *>(buf.data()), (size_t)sz))
+            return real_addApplicationFont(fileName);   // no cpsp: keep the stock file path
+        int id = QFontDatabase::addApplicationFontFromData(buf);
+        if (id < 0) return real_addApplicationFont(fileName);   // rejected: fall back to stock
+        NTF_DBG("cpsp: stripped Capital Spacing from %s (app font id %d)", path.constData(), id);
+        return id;
+    } catch (...) {
+        NTF_LOG("Note: the capital-spacing fix skipped one font after an internal error (likely low memory).");
+        return real_addApplicationFont(fileName);
+    }
+}
+
 // ============ FIX 9: kepub page-boundary clipping (libnickel) ============
 // The seams and the two boundary placements are described at the declarations further up; the
 // trim itself is at the bottom of this section. What comes first is the per-pass arming it needs.
@@ -1862,8 +1947,131 @@ static void ntf_pagecut_trim_report(int trimmed, int refused, int total) {
         trimmed, total, refused);
 }
 
-// addApplicationFont is static int(const QString&); via NickelHook it's a plain int(const QString*).
-static int (*real_addApplicationFont)(const QString *) = nullptr;
+// --- Fix 9 hook bodies. They sit here rather than with the other hooks because every one
+// --- of them serves this fix alone.
+
+// FIX 9 — page-boundary clipping. This hook proves once per pass that the pagination belongs to
+// the reader's own view and leaves ntf_pagecut_trim_armed for the sort hook below; the real
+// function's return value is passed back untouched. Nothing may unwind out of an extern "C" hook,
+// so the arming runs inside a try/catch, and the RAII frame rebalances the depth even when the
+// real call throws. The probe's own bracket is a second RAII frame with the same property, and it
+// is arranged so a config change mid-call cannot unbalance either one.
+extern "C" __attribute__((visibility("default")))
+void *_ntf_wv_locatePages(void *self, int reload) {
+    // `fixing` is computed once per frame from per-boot-constant inputs, so entry and exit always
+    // pair up. Arm on the outermost frame only; the frame's destructor disarms when that frame
+    // closes (see ntf_pagecut_fix_depth: locatePages re-enters this hook mid-pass on
+    // settings-change passes, and an inner frame must neither re-arm nor disarm the outer pass).
+    bool fixing = ntf_enabled() && ntf_pagecut_trim() && ntf_on_qt_thread();
+    ntf_pagecut_fix_frame fix(fixing);
+    if (fix.outermost()) {
+        ntf_pagecut_trim_armed = false;
+        try {
+            ntf_pagecut_trim_armed = (ntf_kepub_reader_view == self
+                || (!ntf_kepub_reader_view && ntf_learn_reader_view(self)));
+        } catch (...) {
+            ntf_pagecut_trim_armed = false;
+        }
+    }
+    // The probe, if its key is on. It sits after the arming so the trim's behaviour does not depend
+    // on it at all, and its frame closes before the trim's, which only means the pass-end lines are
+    // written while the pass is still armed — nothing reads the arming from there.
+    bool probing = ntf_enabled() && ntf_pagecut_probe();
+    bool on_gui = probing && ntf_on_qt_thread();
+    if (probing && !on_gui && ntf_pagecut_stray_ok())
+        NTF_LOG("pagecut probe: stray locatePages (tid=%lx): view=%p reload=%d",
+            (unsigned long)pthread_self(), self, reload);
+    ntf_pagecut_pass_frame probe(self, reload, on_gui, false);
+    return real_wv_locatePages(self, reload);
+}
+
+// FIX 9 probe — the annotation path. KepubBookReaderBase::locatePages is virtual and a normal
+// reader pass reaches it through a vtable slot this hook never sees, so it fires only for the two
+// PLT call sites in the annotation refresh. Its whole job is to mark such a pass (reader=1 in the
+// pass-end line); the base call it makes immediately is what the WebkitView hook above brackets.
+extern "C" __attribute__((visibility("default")))
+void *_ntf_kbrb_locatePages(void *self, int reload) {
+    bool probing = ntf_enabled() && ntf_pagecut_probe();
+    bool on_gui = probing && ntf_on_qt_thread();
+    if (probing && !on_gui && ntf_pagecut_stray_ok())
+        NTF_LOG("pagecut probe: stray reader locatePages (tid=%lx): view=%p reload=%d",
+            (unsigned long)pthread_self(), self, reload);
+    ntf_pagecut_pass_frame probe(self, reload, on_gui, true);
+    return real_kbrb_locatePages(self, reload);
+}
+
+// FIX 9 probe — the straddle cut. Strict passthrough: the real function runs first and its result
+// is returned unchanged, whatever the probe does. Two hardware sessions measured zero calls here
+// across every real pagination pass, so this exists to keep that a measurement rather than an
+// assumption — a non-zero cuts= in a pass-end line, or a stray cut line, is itself a finding. The
+// first call of a boot logs unconditionally, so a log with passes but no cut lines is positive
+// evidence that cutPage did not run.
+extern "C" __attribute__((visibility("default")))
+int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) {
+    int ret = real_wv_cutPage(rects, start, limit, dir);
+    if (!ntf_enabled() || !ntf_pagecut_probe()) return ret;
+    try {
+        if (!__atomic_exchange_n(&ntf_pagecut_cut_seen, true, __ATOMIC_RELAXED))
+            NTF_LOG("pagecut probe: first cutPage call of this boot (tid=%lx)", (unsigned long)pthread_self());
+        if (ntf_on_qt_thread() && ntf_pagecut_depth > 0) {
+            ntf_pagecut_observe(rects, start, limit, dir, ret);
+        } else if (ntf_pagecut_stray_ok()) {
+            // Off the claimed thread, or no locatePages frame open. The classification is pure over
+            // the arguments and the vector belongs to the caller's own stack frame, so this is safe
+            // on any thread; ntf_pagecut_depth is read only to describe the anomaly in the line.
+            ntf_pagecut_cut_info ci = ntf_pagecut_classify(rects, start, limit, ret);
+            NTF_LOG("pagecut probe: stray cut (tid=%lx depth=%d): start=%d limit=%d dir=%d n=%d ret=%d cls=%s",
+                (unsigned long)pthread_self(), ntf_pagecut_depth, start, limit, dir, ci.n, ret,
+                ntf_pagecut_cls_name[ci.cls]);
+        }
+    } catch (...) {
+        NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
+    }
+    return ret;
+}
+
+// FIX 9 — the trim, and the probe's view of it. sortRectsByStart's one caller sits past
+// locatePages' early exits and right before the page walk, so the vector it just sorted is exactly
+// the geometry the walk will read. The real sort runs first; the trim then mutates that vector in
+// place, and the probe dumps the table on both sides of the mutation so the walk's input can be
+// diffed against what the sort produced. Every ungated case leaves the vector untouched, and the
+// try/catch keeps a Qt allocation failure from unwinding out of an extern "C" hook.
+extern "C" __attribute__((visibility("default")))
+void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
+    void *ret = real_wv_sortRects(rects, dir);
+    bool probing = ntf_enabled() && ntf_pagecut_probe();
+    bool probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
+    bool dumped_pre = false;
+    if (probe_here) {
+        try {
+            dumped_pre = ntf_pagecut_observe_sort_pre(rects, dir);
+        } catch (...) {
+            NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
+        }
+    }
+    if (ntf_enabled() && ntf_pagecut_trim() && dir == 0 && rects
+        && ntf_pagecut_trim_armed && ntf_on_qt_thread()) {
+        try {
+            int refused = 0;
+            int trimmed = ntf_pagecut_trim_rects(rects, &refused, probe_here);
+            if (trimmed > 0 || refused > 0) ntf_pagecut_trim_report(trimmed, refused, rects->size());
+        } catch (...) {
+            NTF_LOG("Note: the page-boundary trim skipped one pass after an internal error.");
+        }
+    }
+    if (probe_here) {
+        try {
+            ntf_pagecut_observe_sort_post(rects, dir, dumped_pre);
+        } catch (...) {
+            NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
+        }
+    } else if (probing && ntf_pagecut_stray_ok()) {
+        NTF_LOG("pagecut probe: stray sortRects (tid=%lx depth=%d): n=%d dir=%d",
+            (unsigned long)pthread_self(), ntf_pagecut_depth, rects ? rects->size() : -1, dir);
+    }
+    return ret;
+}
+
 
 static struct nh_info NickelTypeFixInfo = {
     .name            = "NickelTypeFix",
@@ -2155,20 +2363,9 @@ NickelHook(
     .uninstall = &ntf_uninstall,
 )
 
-// ================= hook bodies =================
-// FIX 1 — hinting. Independent: if disabled-by-safety, only hinting passes through.
-extern "C" __attribute__((visibility("default")))
-FT_Error _ntf_FT_Load_Glyph(FT_Face face, FT_UInt glyph_index, FT_Int32 load_flags) {
-    if (!real_FT_Load_Glyph) { ntf_hint_disable_for_safety("real FT_Load_Glyph was NULL"); return 1; }
-    if (__atomic_load_n(&ntf_hint_disabled, __ATOMIC_RELAXED)
-        || ntf_hint_marker_state() != NTF_HINT_MARKER_ABSENT)
-        return real_FT_Load_Glyph(face, glyph_index, load_flags);
-    // Orthogonal to iType's CSM stem-weighting (Font Weight) — that's set before the load.
-    FT_Int32 eff = load_flags;
-    if (ntf_enabled() && ntf_no_hinting() && !ntf_font_hinting_allowed(face))
-        eff |= NTF_FT_LOAD_NO_HINTING;
-    return real_FT_Load_Glyph(face, glyph_index, eff);
-}
+// ================= shared hook bodies =================
+// One Nickel function can carry more than one fix, so these cannot be filed under a single
+// one. Each says which fixes it serves; the rest live with the fix that owns them.
 
 // FIX 6 + FIX 2 — per-book reset. Clear the previous identities before calling Nickel, but do not
 // publish the new reader until its real constructor has completed: a constructor-time WebkitView
@@ -2383,188 +2580,4 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
     // belongs at this seam; both fixes run from loadFinished.
     if (ntf_enabled() && ntf_on_qt_thread() && ntf_page_probe())
         ntf_run_page_script(self, false, false, true);
-}
-
-// FIX 6 — consume: on the first setCurrentPage after a chapter drew (armed above), re-apply the
-// reader-font CSS into the live document. If the chapter rendered its text in a substitute because the
-// font was not ready in time, this re-resolves it in place; if the chapter is already correct the
-// re-apply renders the identical font and is invisible.
-extern "C" __attribute__((visibility("default")))
-void _ntf_wv_setCurrentPage(void *self, int page) {
-    if (real_wv_setCurrentPage) real_wv_setCurrentPage(self, page);
-    // Consume only on the same live reader/view that armed the flag.  The
-    // destructor normally clears ntf_kepub_reader; the identity checks also
-    // make a missing destructor hook fail safe by sitting Fix 6 out.
-    if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_chapter_needs_fix
-        && self == ntf_chapter_view && self == ntf_kepub_reader_view && !ntf_in_fixonturn
-        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_on_qt_thread()) {
-        ntf_chapter_needs_fix = false;
-        ntf_chapter_view = nullptr;
-        ntf_in_fixonturn = true;
-        try {
-            ntf_do_reinject(ntf_kepub_reader, page);
-        } catch (...) {
-            // Contain Qt allocation failures: skipping one chapter's re-apply
-            // just leaves that chapter with stock behavior.
-            NTF_LOG("Note: the reader-font fix skipped one chapter after an internal error (likely low memory).");
-        }
-        ntf_in_fixonturn = false;
-    }
-}
-
-// FIX 7 — capital spacing. Intercept every reader-font registration, drop cpsp from the font in
-// memory, and register the edited bytes via addApplicationFontFromData. Best-effort: on ANY problem
-// we call the real addApplicationFont with the original path, so a font always loads. Only fonts we
-// actually change take the from-data path (minimal blast radius); everything else loads stock. The
-// try/catch contains Qt allocation failures — an exception escaping an extern "C" hook would
-// std::terminate Nickel.
-extern "C" __attribute__((visibility("default")))
-int _ntf_addApplicationFont(const QString *fileName) {
-    if (!real_addApplicationFont) return -1;
-    // No thread guard here (this hook must not become the guard's first claimant): registration
-    // happens at boot and on library rescans, when no reader is paginating.
-    if (!ntf_enabled() || !ntf_cpsp_fix() || !fileName) return real_addApplicationFont(fileName);
-    try {
-        QByteArray path = fileName->toLocal8Bit();
-        FILE *f = fopen(path.constData(), "rb");
-        if (!f) return real_addApplicationFont(fileName);   // Qt resource path / unreadable: stock load
-        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return real_addApplicationFont(fileName); }
-        long sz = ftell(f);
-        if (sz <= 0 || sz > 32 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) {
-            fclose(f); return real_addApplicationFont(fileName);
-        }
-        QByteArray buf;
-        buf.resize((int)sz);
-        size_t got = fread(buf.data(), 1, (size_t)sz, f);
-        fclose(f);
-        if (got != (size_t)sz) return real_addApplicationFont(fileName);
-        if (!ntf_strip_cpsp(reinterpret_cast<uint8_t *>(buf.data()), (size_t)sz))
-            return real_addApplicationFont(fileName);   // no cpsp: keep the stock file path
-        int id = QFontDatabase::addApplicationFontFromData(buf);
-        if (id < 0) return real_addApplicationFont(fileName);   // rejected: fall back to stock
-        NTF_DBG("cpsp: stripped Capital Spacing from %s (app font id %d)", path.constData(), id);
-        return id;
-    } catch (...) {
-        NTF_LOG("Note: the capital-spacing fix skipped one font after an internal error (likely low memory).");
-        return real_addApplicationFont(fileName);
-    }
-}
-
-// FIX 9 — page-boundary clipping. This hook proves once per pass that the pagination belongs to
-// the reader's own view and leaves ntf_pagecut_trim_armed for the sort hook below; the real
-// function's return value is passed back untouched. Nothing may unwind out of an extern "C" hook,
-// so the arming runs inside a try/catch, and the RAII frame rebalances the depth even when the
-// real call throws. The probe's own bracket is a second RAII frame with the same property, and it
-// is arranged so a config change mid-call cannot unbalance either one.
-extern "C" __attribute__((visibility("default")))
-void *_ntf_wv_locatePages(void *self, int reload) {
-    // `fixing` is computed once per frame from per-boot-constant inputs, so entry and exit always
-    // pair up. Arm on the outermost frame only; the frame's destructor disarms when that frame
-    // closes (see ntf_pagecut_fix_depth: locatePages re-enters this hook mid-pass on
-    // settings-change passes, and an inner frame must neither re-arm nor disarm the outer pass).
-    bool fixing = ntf_enabled() && ntf_pagecut_trim() && ntf_on_qt_thread();
-    ntf_pagecut_fix_frame fix(fixing);
-    if (fix.outermost()) {
-        ntf_pagecut_trim_armed = false;
-        try {
-            ntf_pagecut_trim_armed = (ntf_kepub_reader_view == self
-                || (!ntf_kepub_reader_view && ntf_learn_reader_view(self)));
-        } catch (...) {
-            ntf_pagecut_trim_armed = false;
-        }
-    }
-    // The probe, if its key is on. It sits after the arming so the trim's behaviour does not depend
-    // on it at all, and its frame closes before the trim's, which only means the pass-end lines are
-    // written while the pass is still armed — nothing reads the arming from there.
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
-    bool on_gui = probing && ntf_on_qt_thread();
-    if (probing && !on_gui && ntf_pagecut_stray_ok())
-        NTF_LOG("pagecut probe: stray locatePages (tid=%lx): view=%p reload=%d",
-            (unsigned long)pthread_self(), self, reload);
-    ntf_pagecut_pass_frame probe(self, reload, on_gui, false);
-    return real_wv_locatePages(self, reload);
-}
-// FIX 9 probe — the annotation path. KepubBookReaderBase::locatePages is virtual and a normal
-// reader pass reaches it through a vtable slot this hook never sees, so it fires only for the two
-// PLT call sites in the annotation refresh. Its whole job is to mark such a pass (reader=1 in the
-// pass-end line); the base call it makes immediately is what the WebkitView hook above brackets.
-extern "C" __attribute__((visibility("default")))
-void *_ntf_kbrb_locatePages(void *self, int reload) {
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
-    bool on_gui = probing && ntf_on_qt_thread();
-    if (probing && !on_gui && ntf_pagecut_stray_ok())
-        NTF_LOG("pagecut probe: stray reader locatePages (tid=%lx): view=%p reload=%d",
-            (unsigned long)pthread_self(), self, reload);
-    ntf_pagecut_pass_frame probe(self, reload, on_gui, true);
-    return real_kbrb_locatePages(self, reload);
-}
-// FIX 9 probe — the straddle cut. Strict passthrough: the real function runs first and its result
-// is returned unchanged, whatever the probe does. Two hardware sessions measured zero calls here
-// across every real pagination pass, so this exists to keep that a measurement rather than an
-// assumption — a non-zero cuts= in a pass-end line, or a stray cut line, is itself a finding. The
-// first call of a boot logs unconditionally, so a log with passes but no cut lines is positive
-// evidence that cutPage did not run.
-extern "C" __attribute__((visibility("default")))
-int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) {
-    int ret = real_wv_cutPage(rects, start, limit, dir);
-    if (!ntf_enabled() || !ntf_pagecut_probe()) return ret;
-    try {
-        if (!__atomic_exchange_n(&ntf_pagecut_cut_seen, true, __ATOMIC_RELAXED))
-            NTF_LOG("pagecut probe: first cutPage call of this boot (tid=%lx)", (unsigned long)pthread_self());
-        if (ntf_on_qt_thread() && ntf_pagecut_depth > 0) {
-            ntf_pagecut_observe(rects, start, limit, dir, ret);
-        } else if (ntf_pagecut_stray_ok()) {
-            // Off the claimed thread, or no locatePages frame open. The classification is pure over
-            // the arguments and the vector belongs to the caller's own stack frame, so this is safe
-            // on any thread; ntf_pagecut_depth is read only to describe the anomaly in the line.
-            ntf_pagecut_cut_info ci = ntf_pagecut_classify(rects, start, limit, ret);
-            NTF_LOG("pagecut probe: stray cut (tid=%lx depth=%d): start=%d limit=%d dir=%d n=%d ret=%d cls=%s",
-                (unsigned long)pthread_self(), ntf_pagecut_depth, start, limit, dir, ci.n, ret,
-                ntf_pagecut_cls_name[ci.cls]);
-        }
-    } catch (...) {
-        NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
-    }
-    return ret;
-}
-// FIX 9 — the trim, and the probe's view of it. sortRectsByStart's one caller sits past
-// locatePages' early exits and right before the page walk, so the vector it just sorted is exactly
-// the geometry the walk will read. The real sort runs first; the trim then mutates that vector in
-// place, and the probe dumps the table on both sides of the mutation so the walk's input can be
-// diffed against what the sort produced. Every ungated case leaves the vector untouched, and the
-// try/catch keeps a Qt allocation failure from unwinding out of an extern "C" hook.
-extern "C" __attribute__((visibility("default")))
-void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
-    void *ret = real_wv_sortRects(rects, dir);
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
-    bool probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
-    bool dumped_pre = false;
-    if (probe_here) {
-        try {
-            dumped_pre = ntf_pagecut_observe_sort_pre(rects, dir);
-        } catch (...) {
-            NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
-        }
-    }
-    if (ntf_enabled() && ntf_pagecut_trim() && dir == 0 && rects
-        && ntf_pagecut_trim_armed && ntf_on_qt_thread()) {
-        try {
-            int refused = 0;
-            int trimmed = ntf_pagecut_trim_rects(rects, &refused, probe_here);
-            if (trimmed > 0 || refused > 0) ntf_pagecut_trim_report(trimmed, refused, rects->size());
-        } catch (...) {
-            NTF_LOG("Note: the page-boundary trim skipped one pass after an internal error.");
-        }
-    }
-    if (probe_here) {
-        try {
-            ntf_pagecut_observe_sort_post(rects, dir, dumped_pre);
-        } catch (...) {
-            NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
-        }
-    } else if (probing && ntf_pagecut_stray_ok()) {
-        NTF_LOG("pagecut probe: stray sortRects (tid=%lx depth=%d): n=%d dir=%d",
-            (unsigned long)pthread_self(), ntf_pagecut_depth, rects ? rects->size() : -1, dir);
-    }
-    return ret;
 }
