@@ -10,3 +10,7 @@ nhplugin.json
 # anchor-check firmware cache (downloaded, not committed)
 test/anchors/corpus/
 test.syms
+
+# interface check scratch output
+test/interface/current.txt
+test/interface/drift.diff
