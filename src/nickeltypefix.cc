@@ -166,7 +166,6 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_kepub_fontfix",      "1", "Fix 6 - reader-font fallback fix; re-applies the reading font per kepub chapter" },
     { "ntf_cpsp_fix",           "1", "Fix 7 - strip cpsp so capitals aren't spaced apart in body text (any font)" },
     { "ntf_quote_fontfamily",   "1", "Fix 8 - quote the injected reader-font family so digit-token names apply" },
-    { "ntf_order_probe",        "0", "debug: log the order of chapter load, CSS injection and pagination" },
     { "ntf_page_probe",         "0", "debug: report what the page actually contains, so a fix can be aimed" },
     { "ntf_dropcap_fix",        "0", "Fix 11 - stop an oversized drop cap pushing the next line down" },
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
@@ -1865,9 +1864,6 @@ static void ntf_pagecut_trim_report(int trimmed, int refused, int total) {
 
 // addApplicationFont is static int(const QString&); via NickelHook it's a plain int(const QString*).
 static int (*real_addApplicationFont)(const QString *) = nullptr;
-// QRawFont::QRawFont(const QByteArray&, qreal, QFont::HintingPreference) — WebKit's embedded-font
-// path. qreal is double here (the 'd' in the mangled name), passed in d0 under the hard-float ABI.
-static void (*real_QRawFontCtor)(void *, const QByteArray *, double, int) = nullptr;
 
 static struct nh_info NickelTypeFixInfo = {
     .name            = "NickelTypeFix",
@@ -1877,23 +1873,7 @@ static struct nh_info NickelTypeFixInfo = {
     .failsafe_delay  = 3,
 };
 
-// ---------------------------------------------------------------------------
-// ORDERING PROBE (debug build only, key ntf_order_probe, default 0).
-// A future fix wants to run script in the book's frame after the chapter's DOM
-// exists but BEFORE pagination measures it, because changing layout afterwards
-// leaves the page table describing a layout that no longer exists. That is the
-// same failure the page-boundary trim hit. This logs a step number at each
-// candidate point so the real order can be read off a device instead of assumed.
-// Every hook here is a strict passthrough.
-static unsigned ntf_order_step = 0;
-static bool ntf_order_probe() { return ntf_global_config_bool("ntf_order_probe", false); }
-static void ntf_order_mark(const char *what, void *self, int arg) {
-    if (!ntf_enabled() || !ntf_order_probe()) return;
-    unsigned n = __atomic_add_fetch(&ntf_order_step, 1, __ATOMIC_RELAXED);
-    if (n > 400) return;                       // one chapter is plenty; do not flood
-    NTF_LOG("order: %3u  %-34s self=%p arg=%d gui=%d", n, what, self, arg,
-        ntf_on_qt_thread() ? 1 : 0);
-}
+// These are defined further down, next to the script they build.
 static void ntf_run_page_script(void *view, bool images, bool dropcap, bool probe);
 static bool ntf_dropcap_fix();
 static bool ntf_center_images();
@@ -1902,21 +1882,15 @@ static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
 static void (*real_wv_webkitViewLoadFinished)(void *) = nullptr;
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
-    ntf_order_mark("KepubBookReaderBase::loadFinished", self, ok ? 1 : 0);
-    // FIX 11 runs here, and only here. The order probe shows locatePages running one step
-    // inside this call, so this is the last moment a layout change still reaches the page
-    // table. The drop-cap fix shortens a paragraph. Run it any later and the table still
-    // describes the taller layout, and paging back into the chapter lands mid-line.
-    // Uses the tracked reader view rather than self: the two share an address here, but the
-    // tracked pointer is the one we know arrived as a WebkitView.
+    // Before the real call on purpose: locatePages runs one step inside it, so this is the
+    // last point a layout change still reaches the page table. Uses the tracked view, not
+    // self; both share an address here, but only that one is known to be a WebkitView.
     if (ok && ntf_enabled() && ntf_on_qt_thread() && ntf_kepub_reader_view)
         ntf_run_page_script(ntf_kepub_reader_view, ntf_center_images(), ntf_dropcap_fix(), false);
     if (real_kbrb_loadFinished) real_kbrb_loadFinished(self, ok);
-    ntf_order_mark("KepubBookReaderBase::loadFinished RET", self, ok ? 1 : 0);
 }
 extern "C" __attribute__((visibility("default")))
 void _ntf_wv_webkitViewLoadFinished(void *self) {
-    ntf_order_mark("WebkitView::webkitViewLoadFinished", self, -1);
     if (real_wv_webkitViewLoadFinished) real_wv_webkitViewLoadFinished(self);
 }
 
@@ -1978,20 +1952,13 @@ static QString ntf_build_page_script(bool images, bool dropcap) {
           "if(!p||!p.children||p.children.length!==1)continue;"
           "if((p.textContent||'').replace(/\\s/g,'').length)continue;"
           "if(!authorCentred(p))continue;"
-          // Intent is not enough on its own: if the image already sits centred, changing it
-          // reflows the text below for nothing. Measure it and leave it alone. This makes
-          // the whole pass a no-op whenever the reader is not overriding the book, which is
-          // the common case.
+          // An image already sitting centred needs nothing, and moving it would reflow the
+          // text below for no reason.
           "var gr=g.getBoundingClientRect(),br=p.getBoundingClientRect();"
           "if(!(gr.width>0&&br.width>0))continue;"
           "if(Math.abs((gr.left-br.left)-(br.right-gr.right))<=2)continue;"
-          // Centre it three ways, because which one bites depends on the image's own box.
-          // text-align on the block moves an inline image; auto margins move a block one and
-          // do nothing to an inline one. On this book text-align alone was not enough, so
-          // display:block is set as well, which is what worked before we removed it.
-          // That does reflow the text below. It is safe here and only here: this pass runs
-          // from loadFinished, ahead of locatePages, so the page table is built on the
-          // result. Running it from the CSS seam again would strand the view mid-line.
+          // Which property moves the image depends on its own box, so set all three:
+          // text-align moves an inline image, auto margins move a block one.
           "g.setAttribute(M+'-img','1');"
           "p.style.setProperty('text-align','center','important');"
           "g.style.setProperty('display','block','important');"
@@ -2012,11 +1979,9 @@ static QString ntf_build_page_script(bool images, bool dropcap) {
           "if(c.getAttribute(M+'-dc'))continue;"
           "var cs=window.getComputedStyle,fs=parseFloat(cs(c).fontSize),"
           "pf=parseFloat(cs(p).fontSize);"
-          // A floated drop cap is already correct: the float is taken out of the line box,
-          // so it never pushes the next line down and there is nothing here to fix. Worse,
-          // "fixing" it breaks it. float forces display:block, so the inline-block below is
-          // ignored while height:1em still applies, and the float collapses to one line tall
-          // with the second line of text running through it. Same for a positioned one.
+          // A floated drop cap is out of the line box already, so there is nothing to fix,
+          // and clamping one breaks it: float forces display:block, which discards the
+          // inline-block below while height:1em still applies, collapsing the float.
           "var fl=cs(c).cssFloat;if(fl===undefined)fl=cs(c).getPropertyValue('float');"
           "if(fl&&fl!=='none')continue;"
           "if(cs(c).position&&cs(c).position!=='static')continue;"
@@ -2048,8 +2013,7 @@ static QString ntf_build_page_probe() {
       "o.push('gmcr='+(window.getMatchedCSSRules?1:0));"
       "var im=D.getElementsByTagName('img');o.push('img='+im.length);"
       "for(var i=0;i<im.length&&i<3;i++){var g=im[i],p=g.parentNode;"
-      // The corrective pass climbs out of the koboSpan wrappers to the block that carries
-      // the alignment, so report that block too, not just the immediate parent.
+      // Report the block the fix targets, not just the immediate parent.
       "var b=p;while(b&&b.tagName&&b.tagName.toLowerCase()==='span')b=b.parentNode;"
       "var cs=window.getComputedStyle;"
       "o.push('img'+i+':par='+(p?p.tagName:'-')+'.'+((p&&p.className)||'')"
@@ -2093,8 +2057,6 @@ static void ntf_run_page_script(void *view, bool images, bool dropcap, bool prob
         }
         if (images || dropcap) {
             QVariant r = ntf_wv_evaluateJavaScript(view, ntf_build_page_script(images, dropcap));
-            // Name the pass: the two run from different seams now, and a bare count cannot
-            // be told apart in a log when both report the same number.
             NTF_DBG("page script (%s): view %p adjusted %d element(s)",
                 images && dropcap ? "images+dropcap" : images ? "images" : "dropcap",
                 view, r.toInt());
@@ -2162,13 +2124,6 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN19KepubBookReaderBase11locatePagesEb", .sym_new = "_ntf_kbrb_locatePages",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_locatePages), .desc = "fix 9 probe: mark annotation-path passes", .optional = true },
     //libnickel 4.21.15015 * _ZN19KepubBookReaderBase11locatePagesEb
-    // FIX 7 (embedded fonts) — TO BE TESTED LATER. WebKit constructs a QRawFont from epub @font-face
-    // bytes; this hooks that ctor in the WebKit lib's PLT to strip cpsp from embedded fonts too. Left
-    // DISABLED (entry commented out) until it can be validated on-device with an epub whose @font-face
-    // font actually carries cpsp — the reader-font hook above is confirmed, this path is not. The hook
-    // body (_ntf_QRawFontCtor) and real_QRawFontCtor are kept below; re-enable by uncommenting this.
-    // { .sym = "_ZN8QRawFontC1ERK10QByteArraydN5QFont17HintingPreferenceE", .sym_new = "_ntf_QRawFontCtor",
-    //   .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_QRawFontCtor), .desc = "fix 7: strip cpsp from embedded @font-face fonts", .optional = true },
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
@@ -2423,11 +2378,9 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         // the injection then goes through unmodified, which is stock behavior.
         NTF_LOG("Note: a CSS-injection fix skipped one update after an internal error (likely low memory).");
     }
-    ntf_order_mark("WebkitView::addCssToHtml", self, -1);
     if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
-    // Pagination has already run for this chapter by the time the CSS lands here (see the
-    // order probe), so no corrective pass belongs at this seam any more; both run from
-    // loadFinished. Only the diagnostic stays, and it reports the untouched document.
+    // Pagination has already run by the time the CSS lands here, so only the diagnostic
+    // belongs at this seam; both fixes run from loadFinished.
     if (ntf_enabled() && ntf_on_qt_thread() && ntf_page_probe())
         ntf_run_page_script(self, false, false, true);
 }
@@ -2523,7 +2476,6 @@ void *_ntf_wv_locatePages(void *self, int reload) {
     // The probe, if its key is on. It sits after the arming so the trim's behaviour does not depend
     // on it at all, and its frame closes before the trim's, which only means the pass-end lines are
     // written while the pass is still armed — nothing reads the arming from there.
-    ntf_order_mark("WebkitView::locatePages", self, reload);
     bool probing = ntf_enabled() && ntf_pagecut_probe();
     bool on_gui = probing && ntf_on_qt_thread();
     if (probing && !on_gui && ntf_pagecut_stray_ok())
@@ -2583,7 +2535,6 @@ int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) 
 // try/catch keeps a Qt allocation failure from unwinding out of an extern "C" hook.
 extern "C" __attribute__((visibility("default")))
 void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
-    ntf_order_mark("WebkitView::sortRectsByStart", rects, dir);
     void *ret = real_wv_sortRects(rects, dir);
     bool probing = ntf_enabled() && ntf_pagecut_probe();
     bool probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
@@ -2616,28 +2567,4 @@ void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
             (unsigned long)pthread_self(), ntf_pagecut_depth, rects ? rects->size() : -1, dir);
     }
     return ret;
-}
-
-// FIX 7 (embedded fonts) — TO BE TESTED LATER; NOT CURRENTLY WIRED (its entry in NickelTypeFixHooks
-// is commented out until it can be validated on-device). Kept here ready to re-enable.
-// kepub @font-face fonts don't go through addApplicationFont; WebKit builds
-// them straight into a QRawFont from the embedded bytes. Same treatment, done in place: strip cpsp
-// from the QByteArray before the ctor parses it. WebKit owns fontData and keeps it alive across the
-// ctor, so there's no lifetime concern; a shared buffer detaches (copies) before we touch it, so
-// another holder of the same bytes is unaffected. Best-effort: on any problem the ctor runs on the
-// original data. The try/catch contains Qt allocation failures (a throw out of an extern "C" hook
-// would std::terminate Nickel).
-extern "C" __attribute__((visibility("default")))
-void _ntf_QRawFontCtor(void *self, const QByteArray *fontData, double pixelSize, int hintingPreference) {
-    if (!real_QRawFontCtor) return;
-    if (ntf_enabled() && ntf_cpsp_fix() && fontData && !fontData->isEmpty()) {
-        try {
-            QByteArray *mut = const_cast<QByteArray *>(fontData);
-            if (ntf_strip_cpsp(reinterpret_cast<uint8_t *>(mut->data()), (size_t)mut->size()))
-                NTF_DBG("cpsp: stripped Capital Spacing from an embedded font (%d bytes)", mut->size());
-        } catch (...) {
-            NTF_LOG("Note: the capital-spacing fix skipped one embedded font after an internal error (likely low memory).");
-        }
-    }
-    real_QRawFontCtor(self, fontData, pixelSize, hintingPreference);
 }

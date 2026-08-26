@@ -303,7 +303,7 @@ Fixes 10 and 11 can't be written as a CSS rule, because what has to be decided i
 
 **How.** Nickel has its own entry point for running script in a book's frame, `WebkitView::evaluateJavaScriptWithBrokenness` (resolved with `nh_dlsym`, `_ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString`), and the reader itself uses it for highlights and layout. The mod builds one short script per pass and runs it through that. The symbol is `optional`; on a firmware without it, both fixes sit out. It returns a `QVariant` by value, which the call site in `WebkitView::forceLayout` (`0x00bcada4`) confirms: `r0` is the struct-return pointer, `r1` is `this`, and the caller destroys the result afterwards.
 
-**When.** At the top of the `KepubBookReaderBase::loadFinished` hook, before it chains to the real function. The ordering probe (`ntf_order_probe`) settles this on hardware rather than by assumption, and the answer depends on what triggered the pagination:
+**When.** At the top of the `KepubBookReaderBase::loadFinished` hook, before it chains to the real function. This was settled on hardware rather than by assumption, with a temporary probe that numbered each step, and the answer depends on what triggered the pagination:
 
 - **Chapter load:** `loadFinished` -> `locatePages` -> `addCssToHtml`. Pagination happens *inside* `loadFinished`, one step in, and the CSS seam trails it by two.
 - **Settings change or resize:** `addCssToHtml` -> `locatePages`, with no `loadFinished` at all.
@@ -325,7 +325,6 @@ One WebKit detail matters. A style write only marks the render tree dirty; geome
 Three config keys turn on extra logging. All default to `0`, all are observation only, and none of them changes anything about how a page is rendered or cut. They exist so a bug report can carry the measurements instead of a description.
 
 - `ntf_pagecut_probe` dumps the kepub line boxes as the page walk received them, on both sides of Fix 9's trim in the same pass, names every box the trim's guards refused, and reads each placed page boundary back out of the finished page table. Every probe hook calls the real function first and hands its result back unchanged, so a boot with the probe on paginates byte-identically to the same boot with it off.
-- `ntf_order_probe` writes a numbered line at each of chapter load, CSS injection and pagination, so the real order can be read off a device instead of assumed. Every hook is a pass-through, and it stops after 400 steps so one chapter can't flood the log.
 - `ntf_page_probe` writes one line describing what the chapter actually contains: how many images there are, what their parent blocks look like, and which paragraphs start with an oversized element. It was written because the Fix 10 script matched nothing on a real store kepub, and store books are converted by Kobo rather than by kepubify, so the markup nesting is not necessarily the same. Repeated identical lines collapse to the first.
 
 ---
@@ -345,7 +344,7 @@ A fix's edits are all located and verified before *any* is written (both-or-noth
 
 - The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
 - The hooks and lookups (Fixes 1, 2, and 6 through 11) bind exact symbols and are `optional`; a rename makes that fix inert and leaves the rest running.
-- The diagnostics (`ntf_pagecut_probe`, `ntf_order_probe`, `ntf_page_probe`) are off by default and observe only. Their hooks call the real function first and pass its result back, so a page is laid out and cut identically whether they are on or off.
+- The diagnostics (`ntf_pagecut_probe`, `ntf_page_probe`) are off by default and observe only. Their hooks call the real function first and pass its result back, so a page is laid out and cut identically whether they are on or off.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - Logging is quiet by default: a healthy boot writes nothing to `nickel-type-fix.log`. Problems (a fix that can't apply, a failed write, a safety trip, a mistake in the config file) are always logged, and a config mistake also switches full verbose logging on for that boot. Set `ntf_log:1` to log everything, so a single boot shows which fixes engaged.
 - Nothing is written to any device library on disk; a boot without the mod is stock.

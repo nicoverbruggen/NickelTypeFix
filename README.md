@@ -141,7 +141,6 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 | `ntf_pagecut_probe` | `0` | Diagnostic: log the line boxes and where each page boundary landed. |
-| `ntf_order_probe` | `0` | Diagnostic: log the order of chapter load, CSS injection and pagination. |
 | `ntf_page_probe` | `0` | Diagnostic: log what the page actually contains. |
 
 Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.

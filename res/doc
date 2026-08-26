@@ -48,12 +48,11 @@ Fixes:
 - ntf_dropcap_fix:1        stop an oversized drop cap pushing the line under it down
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 - ntf_pagecut_probe:0      diagnostic: log the line boxes and where each page boundary landed
-- ntf_order_probe:0        diagnostic: log the order of chapter load, CSS injection and pagination
 - ntf_page_probe:0         diagnostic: log what the page actually contains
 
 A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config
 file (a misspelled setting, an invalid value) turns full verbose logging on for that boot so it
 diagnoses itself. Set ntf_log:1 to also log each
-fix engaging. The three probes are for bug reports and only add detail to the log: with any of
+fix engaging. The two probes are for bug reports and only add detail to the log: with any of
 them on, a page is laid out and cut exactly as it is with them off. Changes take effect on
 reboot. Delete the `uninstall` file and reboot to remove.
