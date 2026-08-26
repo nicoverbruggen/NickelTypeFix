@@ -61,5 +61,5 @@ ntf_quote_fontfamily = '1'
 ntf_vertfix = '1'
 
 [long string literals]
-count  269
-sha256 210eea385edc111945c07acc5a756d9a47eea06a76b834afc6916de6d3740f94
+count  267
+sha256 76bdeee91a2c18c130f2de58983ce8885069e3218e9ad4665819b86a6f74eac4

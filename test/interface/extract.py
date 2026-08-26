@@ -62,7 +62,14 @@ out += sorted(exported)
 #    the libraries it looks them up in.
 ro = by.get(".rodata")
 text = blob[ro["off"]:ro["off"] + ro["size"]] if ro else b""
-strs = [s.decode("latin-1") for s in re.findall(rb"[\x20-\x7e]{4,}", text)]
+
+# The build stamps its git version into several strings. Left alone, the snapshot would
+# differ on every commit and say nothing about the code, so blank the version out first.
+# Normalise before measuring length: the stamp is not a fixed width, and a literal near the
+# threshold below would otherwise drop in or out of the digest as the version grew.
+VERSION = re.compile(r"v\d+\.\d+(?:\.\d+)?(?:-\d+-g[0-9a-f]{6,})?(?:-dirty)?|\bdev\b")
+strs = [VERSION.sub("<version>", s.decode("latin-1"))
+        for s in re.findall(rb"[\x20-\x7e]{4,}", text)]
 out.append("")
 out.append("[hooked and resolved symbols]")
 out += sorted({s for s in strs if re.fullmatch(r"_Z[A-Za-z0-9_]{4,}", s)})
