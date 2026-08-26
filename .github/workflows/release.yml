@@ -5,42 +5,12 @@ on:
     tags: ["v*"]
 
 jobs:
-  build:
-    name: NickelTypeFix
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/pgaskin/nickeltc:1.0
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0        # full history so `git describe` stamps the tag as the version
-          submodules: true
-
-      - name: Build
-        run: make clean all strip koboroot
-
-      - name: Check interface
-        run: test/interface/check.sh
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: NickelTypeFix
-          path: |
-            KoboRoot.tgz
-            src/libnickeltypefix.so
-
-  syms:
-    uses: ./.github/workflows/syms.yml
-
-  anchors:
-    uses: ./.github/workflows/anchors.yml
+  checks:
+    uses: ./.github/workflows/checks.yml
 
   release:
     name: Release
-    needs: [build, syms, anchors]
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: write
