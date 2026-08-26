@@ -8,6 +8,9 @@ wired, and reading the diff of a 2500-line file will not tell you that with any 
 Everything in the snapshot is read out of the compiled library, never out of the source, so
 it describes what actually ships.
 
+The snapshot records the default release build. A build made with `NTF_DEV_BUILD=1` intentionally
+adds probe hooks, symbol lookups, and strings, so do not re-record `golden.txt` from that variant.
+
 ```sh
 make all          # or ./build.sh
 test/interface/check.sh
@@ -21,6 +24,7 @@ test/interface/check.sh
 | hooked and resolved symbols | a hook pointed at a different function, or one lost |
 | target libraries | a symbol looked up in the wrong library |
 | config keys and defaults | a key renamed or removed, or a shipped default flipped |
+| fresh-install config file | a missing, extra, duplicate, or mismatched config entry |
 | long string literals | a change to the injected CSS, or to the scripts run in the book's frame |
 
 ## What it does not cover

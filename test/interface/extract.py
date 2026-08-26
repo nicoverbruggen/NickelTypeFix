@@ -6,7 +6,7 @@ describes what actually ships. Output is sorted and deterministic: diff two runs
 
 usage: extract.py <path to libnickeltypefix.so>
 """
-import hashlib, re, struct, sys
+import collections, hashlib, re, struct, sys
 
 blob = open(sys.argv[1], "rb").read()
 
@@ -96,8 +96,8 @@ for secname in (".data.rel.ro", ".data.rel.ro.local", ".data", ".rodata"):
         desc = cstr(p3, 400) if p3 else ""
         if d is None or desc is None:
             continue
-        keys.append(f"{k} = {d!r}")
-out += sorted(set(keys))
+        keys.append((k, d))
+out += [f"{k} = {d!r}" for k, d in sorted(set(keys))]
 
 # 4. The config file the mod writes on a fresh install. This is a separate source of truth
 #    from the table above, and the two silently disagreeing is a bug that ships: the table
@@ -106,23 +106,32 @@ out += sorted(set(keys))
 #    because the template spans many lines and the list is split on newlines.
 out.append("")
 out.append("[fresh-install config file]")
-written = {}
+written_pairs = []
 # Anchor on the file's own header: "ntf_enabled:" also appears in a log message.
 idx = text.find(b"# NickelTypeFix configuration")
 if idx >= 0:
     lo = text.rfind(b"\0", 0, idx) + 1
     hi = text.find(b"\0", idx)
     tpl = text[lo:hi].decode("utf-8", "replace")
-    written = dict(re.findall(r"^(ntf_[a-z_]+):(.*)$", tpl, re.M))
+    written_pairs = re.findall(r"^(ntf_[a-z_]+):(.*)$", tpl, re.M)
+written = dict(written_pairs)
 for k in sorted(written):
     out.append(f"{k} = {written[k]!r}")
 
 out.append("")
 out.append("[table vs file disagreements]")
-table = dict(re.match(r"(\S+) = (.*)", k).groups() for k in set(keys))
-bad = [f"{k}: table {v}, file {written[k]!r}"
-       for k, v in sorted(table.items())
-       if k in written and written[k] != v.strip("'")]
+table = dict(keys)
+table_counts = collections.Counter(k for k, _ in keys)
+written_counts = collections.Counter(k for k, _ in written_pairs)
+bad = [f"{k}: duplicate table key ({n} entries)"
+       for k, n in sorted(table_counts.items()) if n > 1]
+bad += [f"{k}: duplicate file key ({n} entries)"
+        for k, n in sorted(written_counts.items()) if n > 1]
+bad += [f"{k}: missing from file" for k in sorted(table.keys() - written.keys())]
+bad += [f"{k}: missing from table" for k in sorted(written.keys() - table.keys())]
+bad += [f"{k}: table {table[k]!r}, file {written[k]!r}"
+        for k in sorted(table.keys() & written.keys())
+        if written[k] != table[k]]
 out += bad or ["none"]
 
 # 5. A digest of the long string literals. The injected CSS and the scripts the mod runs
