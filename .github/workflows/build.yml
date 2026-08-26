@@ -23,6 +23,9 @@ jobs:
       - name: Build
         run: make clean all strip koboroot
 
+      - name: Check interface
+        run: test/interface/check.sh
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
