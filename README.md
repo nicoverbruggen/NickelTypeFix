@@ -9,22 +9,39 @@ Each fix is independent and fail-safe. Individual fixes engage only if they can 
 
 ## What it fixes
 
-1. **Glyph "wobble"**: letters that drift a pixel up/down, giving an uneven line, on fonts with no hinting instructions. 
+Nine defects, grouped by what they affect. The numbers are stable identifiers: they match the Fix numbers in [ABOUT.md](ABOUT.md) and the order the fixes were added, not their importance.
+
+### How glyphs are drawn
+
+- **Fix 1 · Glyph "wobble"**: letters that drift a pixel up/down, giving an uneven line, on fonts with no hinting instructions. 
 → loads unhinted fonts, so iType stops grid-fitting inconsistently.
-2. **Vertical (tategaki) CJK text** rendering sideways/misplaced under `optimizeLegibility`. 
-→ keeps vertical books on WebKit's correct rendering path.
-3. **Justified kepubs breaking at sentence boundaries** (uneven gaps) under `optimizeLegibility`. the main justification fix. 
-→ corrects Qt's justifier so the boundary space gets its share.
-4. **Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
-→ secondary justification fix.
-5. **Letter-spacing not applied to spaces**: CSS `letter-spacing` (tracking) widens the letters but leaves the spaces, and the letter before each space, at their natural width, so any multi-word letter-spaced text (a heading, a styled caption, spaced small-caps, and so on) runs its words together. 
-→ patches Qt's text shaper so the spaces get the same tracking, the way browsers render it.
-6. **Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
-→ re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
-7. **Capital spacing (`cpsp`) applied to body text**: some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps runs, but the reader applies it everywhere, so every capital is pushed away from the letter after it (a loose gap after the `D` in `Docks`). 
+- **Fix 7 · Capital spacing (`cpsp`) applied to body text**: some fonts carry an OpenType `cpsp` (Capital Spacing) feature meant only for all-caps runs, but the reader applies it everywhere, so every capital is pushed away from the letter after it (a loose gap after the `D` in `Docks`). 
 → strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing; kerning and other features are untouched.
-8. **Fonts with a number in the name not applying** (for example `Source Serif 4`, `Helvetica 75`, `Bitter 24pt`): the reader drops your reading font into the page as an *unquoted* CSS rule, so a family name with a space before a digit is invalid CSS, gets discarded, and the text silently falls back to the default font. 
-→ quotes the injected font-family so any family name, numbered ones included, applies. No more renaming fonts to work around it.
+
+### How text is spaced on a line
+
+These three only do anything with `optimizeLegibility` turned on (see below).
+
+- **Fix 3 · Justified kepubs breaking at sentence boundaries** (uneven gaps). the main justification fix. 
+→ corrects Qt's justifier so the boundary space gets its share.
+- **Fix 4 · Justification skewing around punctuation** (em/en dashes, ellipses, curly quotes). 
+→ secondary justification fix.
+- **Fix 5 · Letter-spacing not applied to spaces**: CSS `letter-spacing` (tracking) widens the letters but leaves the spaces, and the letter before each space, at their natural width, so any multi-word letter-spaced text (a heading, a styled caption, spaced small-caps, and so on) runs its words together. 
+→ patches Qt's text shaper so the spaces get the same tracking, the way browsers render it.
+
+### How a page is laid out
+
+- **Fix 2 · Vertical (tategaki) CJK text** rendering sideways/misplaced under `optimizeLegibility`. 
+→ keeps vertical books on WebKit's correct rendering path.
+- **Fix 9 · A page edge cutting through a line of text**, leaving a thin strip of letter tops at the bottom of the page. 
+→ trims the boxes the reader breaks pages with so they can't overlap, and it moves the line onto the next page whole. Works with any font.
+
+### Which font you actually get
+
+- **Fix 6 · Reader font falling back to the system font** in a kepub book: now and then a chapter's text renders in the default system font instead of the reading font you picked, and paging forward doesn't fix it (only changing the font, or reopening the book, does). 
+→ re-applies your reading font on every chapter, so a chapter that happened to draw before the font was ready gets corrected in place.
+- **Fix 8 · Fonts with a number in the name not applying**, like `Source Serif 4` or `Bitter 24pt`: the text silently falls back to the default font. 
+→ quotes the font name the reader injects, so numbered families work without renaming them.
 
 ## Why was this made?
 
@@ -56,7 +73,7 @@ These are actual page captures from the author's own **Kobo Clara BW** before an
 
 The middle **diff** overlays the two: **red** is ink the fix removed (its old position), **green** is ink the fix added (its new position), white is unchanged. This way, the effect is obvious even where it's subtle on the page.
 
-### 1. Glyph outline rendering fix ("wobble" fix)
+### Fix 1 — Glyph "wobble"
 
 Letters can drift exactly one pixel off the baseline; the diff lights up nearly every glyph the unhinting re-rasterizes:
 
@@ -64,7 +81,7 @@ Letters can drift exactly one pixel off the baseline; the diff lights up nearly 
 |---|---|---|
 | ![wobble original](docs/screenshots/wobble.png) | ![wobble diff](docs/highlight/wobble-diff.png) | ![wobble fixed](docs/screenshots/wobble-free.png) |
 
-### 2. Vertical text orientation fix
+### Fix 2 — Vertical (tategaki) CJK text
 
 CJK punctuation (`、` `。`) and small kana float centered in the
 cell instead of tucking to the top-right where vertical Japanese needs them:
@@ -73,7 +90,7 @@ cell instead of tucking to the top-right where vertical Japanese needs them:
 |---|---|---|
 | ![vertical original](docs/screenshots/cjk-broken.png) | ![vertical diff](docs/highlight/cjk-diff.png) | ![vertical fixed](docs/screenshots/cjk-correct.png) |
 
-### 3. Justification fix
+### Fix 3 — Justified text at koboSpan boundaries
 
 Most noticeable: a starved gap at the sentence boundary (`justification   maths.`) with the rest of the line over-stretched, vs. even word spacing:
 
@@ -81,7 +98,7 @@ Most noticeable: a starved gap at the sentence boundary (`justification   maths.
 |---|---|---|
 | ![justify original](docs/screenshots/justification-broken.png) | ![justify diff](docs/highlight/justify-diff.png) | ![justify fixed](docs/screenshots/justification-correct.png) |
 
-### 4. Letter-spacing on spaces fix
+### Fix 5 — Letter-spacing on spaces
 
 CSS `letter-spacing` (tracking) spread the letters but left the spaces at their natural width, so a tracked chapter title ran its words together. The fix gives the spaces, and the letter before each space, the same tracking, so the words stay apart. The diff shows each glyph shifting right as the widened spaces push the following words along:
 
@@ -89,13 +106,21 @@ CSS `letter-spacing` (tracking) spread the letters but left the spaces at their 
 |---|---|---|
 | ![letter-spacing original](docs/screenshots/letterspacing-broken.png) | ![letter-spacing diff](docs/highlight/letterspacing-diff.png) | ![letter-spacing fixed](docs/screenshots/letterspacing-correct.png) |
 
-### 5. Capital spacing (cpsp) fix
+### Fix 7 — Capital spacing (cpsp)
 
 Some fonts carry the OpenType `cpsp` (Capital Spacing) feature, meant only for all-caps text, and the reader applies it to ordinary body text too, so every capital is pushed away from the letter after it and that extra space spreads across the whole line. The fix removes `cpsp`, so capitals sit at their normal spacing again. Because a capital shifts everything after it, the diff lights up whole lines pulling tighter (red is the looser original, green the corrected position), and further down the page the text re-flows as words no longer get pushed to the next line:
 
 | original | diff | fixed |
 |---|---|---|
 | ![capital spacing original](docs/screenshots/cap-broken.png) | ![capital spacing diff](docs/highlight/cap-diff.png) | ![capital spacing fixed](docs/screenshots/cap-correct.png) |
+
+### Fix 9 — Page-boundary clipping
+
+The reader breaks a page using one box per line, and those boxes are a little taller than the gap between the lines, so they overlap and a break can land inside a line. The fix trims the overlap away, and the reader then moves the line onto the next page whole. At the bottom of the original below, that thin strip is one pixel of a cut line; with the fix it is a whole line of text. The diff is entirely green because this fix only ever puts back ink the page edge had removed.
+
+| original | diff | fixed |
+|---|---|---|
+| ![page-boundary original](docs/screenshots/pagecut-broken.png) | ![page-boundary diff](docs/highlight/pagecut-diff.png) | ![page-boundary fixed](docs/screenshots/pagecut-correct.png) |
 
 ## Configuration
 
@@ -119,8 +144,7 @@ fixes arrive enabled and the file stays complete without you editing anything.
 | `ntf_kepub_fontfix` | `1` | Fix 6 (reader-font fallback): re-apply the reading font on each kepub chapter. `0` = stock. |
 | `ntf_cpsp_fix` | `1` | Fix 7 (capital spacing): strip the `cpsp` feature so capitals aren't spaced apart in body text. Works for any font. `0` = stock. |
 | `ntf_quote_fontfamily` | `1` | Fix 8 (font-family quoting): quote the injected reader font-family so families with a number in the name (`Source Serif 4`, `Bitter 24pt`) still apply. `0` = stock. |
-| `ntf_pagecut_probe` | `0` | Diagnostic for the "characters cut off at page edges" issue: log how the reader places each kepub page boundary. Pages are still cut exactly as without the mod; only the log gains detail. Leave it off unless you're collecting a log for that issue. |
-| `ntf_pagecut_fix` | `0` | Fix 9 (page-boundary clipping, in field validation): move a kepub page boundary that cuts through a line of your sideloaded reading font into the gap between the lines, so letter tops/bottoms aren't shaved at page edges. Off by default; needs a sideloaded reading font. |
+| `ntf_pagecut_trim` | `1` | Fix 9 (page-boundary clipping): trim each kepub line box a few pixels so no line box overlaps the next, which stops the reader slicing a line of text at a page edge; it moves the whole line onto the next page instead. Measures nothing about the font, so it works with any font, Kobo's built-in ones and publisher-default books included. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Off by default (a healthy boot logs nothing); problems are always logged regardless. `1` = log everything. |
 
 By default the log stays empty on a healthy boot; anything that goes wrong (a fix that can't apply on your firmware, a failed patch, a safety trip) is always logged. Set `ntf_log` to `1` to also log each fix engaging, so one boot tells the whole story. A problem in the config file itself (a misspelled setting, a malformed line, an invalid value) is warned about and switches on full verbose logging for that boot automatically, so a config mistake always diagnoses itself in the log.

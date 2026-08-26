@@ -20,13 +20,9 @@ Fixes:
 - Reader font whose family name has a word starting with a digit ("Roboto 2", "Bitter 24pt")
   silently dropped because Kobo injects it as unquoted, invalid CSS; the family name is quoted so it
   applies.
-- Page-boundary probe (diagnostic, off by default): logs how the reader places each kepub page
-  boundary, for the "characters cut off at page edges" investigation. Pages are still cut exactly
-  as stock; only the log gains detail.
-- Page-boundary clipping fix (off by default while it is field-validated): a kepub page boundary
-  that cuts through a line of a sideloaded reading font is moved into the gap between the lines,
-  so letter tops/bottoms aren't shaved at page edges. It measures the font's real letter shapes
-  and leaves every boundary it cannot prove safe exactly as stock.
+- A kepub page edge slicing through a line of text, leaving its letter tops as a thin strip at
+  the bottom of the page before it; the line boxes the reader paginates with are trimmed so they
+  can't overlap, and it then moves the line onto the next page whole. Works with any font.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -40,8 +36,7 @@ Fixes:
 - ntf_kepub_fontfix:1      reader-font fallback fix; re-applies the reading font per kepub chapter
 - ntf_cpsp_fix:1           strip cpsp so capitals aren't spaced apart in body text (any font)
 - ntf_quote_fontfamily:1   quote the injected reader-font family so digit-token names apply
-- ntf_pagecut_probe:0      log kepub page-boundary placement (diagnostic; pages cut exactly as stock)
-- ntf_pagecut_fix:0        keep kepub page boundaries out of the letters (needs a sideloaded font)
+- ntf_pagecut_trim:1       trim kepub line boxes so they never overlap and page edges stay clean (any font)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
 A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config
