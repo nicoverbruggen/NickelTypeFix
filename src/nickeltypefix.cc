@@ -2109,7 +2109,6 @@ static bool ntf_dropcap_fix();
 static bool ntf_center_images();
 
 static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
-static void (*real_wv_webkitViewLoadFinished)(void *) = nullptr;
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
     // Before the real call on purpose: locatePages runs one step inside it, so this is the
@@ -2118,10 +2117,6 @@ void _ntf_kbrb_loadFinished(void *self, bool ok) {
     if (ok && ntf_enabled() && ntf_on_qt_thread() && ntf_kepub_reader_view)
         ntf_run_page_script(ntf_kepub_reader_view, ntf_center_images(), ntf_dropcap_fix(), false);
     if (real_kbrb_loadFinished) real_kbrb_loadFinished(self, ok);
-}
-extern "C" __attribute__((visibility("default")))
-void _ntf_wv_webkitViewLoadFinished(void *self) {
-    if (real_wv_webkitViewLoadFinished) real_wv_webkitViewLoadFinished(self);
 }
 
 
@@ -2133,12 +2128,10 @@ void _ntf_wv_webkitViewLoadFinished(void *self) {
 // Nickel's own entry point for that (WebkitView::evaluateJavaScriptWithBrokenness,
 // which the reader uses for highlights and layout).
 //
-// WHEN. At the end of the addCssToHtml hook, after the real call has put the reader's
-// CSS into the live document. The ordering probe showed every pagination that matters
-// is immediately preceded by that call, on chapter load AND after a settings change
-// (a settings change re-paginates with no loadFinished at all, so hooking chapter load
-// would leave the page uncorrected until the next chapter). Running here means the
-// script's changes are in place before locatePages measures anything.
+// WHEN. At the start of KepubBookReaderBase::loadFinished, before the real call. Device traces
+// showed locatePages running inside that call, so the script's changes reach the page table.
+// A later settings change re-paginates the same document without another loadFinished, but the
+// inline styles and data-ntf markers survive in that live DOM and still apply at the new size.
 //
 // The script therefore runs several times per chapter and MUST be idempotent: it marks
 // what it has touched and skips it next time, and returns immediately when there is
@@ -2303,14 +2296,10 @@ static void ntf_run_page_script(void *view, bool images, bool dropcap, bool prob
 }
 
 static struct nh_hook NickelTypeFixHooks[] = {
-    // ORDERING PROBE (debug build): passthroughs, both optional so a firmware without
-    // them simply leaves the probe blind rather than failing the mod.
+    // FIX 10/11: correct the chapter before loadFinished paginates it.
     { .sym = "_ZN19KepubBookReaderBase12loadFinishedEb", .sym_new = "_ntf_kbrb_loadFinished",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_loadFinished),
-      .desc = "order probe: chapter load finished", .optional = true },
-    { .sym = "_ZN10WebkitView22webkitViewLoadFinishedEv", .sym_new = "_ntf_wv_webkitViewLoadFinished",
-      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_webkitViewLoadFinished),
-      .desc = "order probe: view load finished", .optional = true },
+      .desc = "fix 10/11: correct page before pagination", .optional = true },
     // FIX 1 — now OPTIONAL so a missing FT symbol only sits out hinting (independence).
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
       .out = nh_symoutptr(real_FT_Load_Glyph), .desc = "load glyphs unhinted", .optional = true },

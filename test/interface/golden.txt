@@ -9,7 +9,6 @@ _ntf_wv_addCssToHtml
 _ntf_wv_locatePages
 _ntf_wv_setCurrentPage
 _ntf_wv_sortRects
-_ntf_wv_webkitViewLoadFinished
 
 [hooked and resolved symbols]
 _Z26writingDirectionFromStringRK7QString
@@ -17,7 +16,6 @@ _ZN10WebkitView11locatePagesEb
 _ZN10WebkitView12addCssToHtmlE7QString
 _ZN10WebkitView14setCurrentPageEi
 _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
-_ZN10WebkitView22webkitViewLoadFinishedEv
 _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
 _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
 _ZN13CustomWebView19setWritingDirectionE16WritingDirection
@@ -72,4 +70,4 @@ none
 
 [long string literals]
 count  243
-sha256 0944c0d1e100c8ba51a7f1f8c1ed5ad20805977615d7d065404ea110e854a7dc
+sha256 63b22e7cdd4134ee5c05ba387281494365b927f97ea6baedbb571b113a7dd523
