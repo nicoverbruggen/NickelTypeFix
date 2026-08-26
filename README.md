@@ -32,6 +32,7 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | --- | --- | --: |
 | Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
 | Sometimes lines of text seem to be cut off and spread across two page turns. | Trims the boxes the reader breaks pages with so they can't overlap, then moves the line onto the next page whole. Works with any font. | **#9** |
+| Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. No box changes size, so no text moves. | **#10** |
 
 ### Which font you actually get
 
@@ -112,9 +113,9 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 
 Settings are read from `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on the first boot; there's no shipped template file). Changes take effect on reboot.
 
-**Every fix is on by default, unless you turn it off**: a key that isn't in your config uses its default (on), which is why the config only ever needs to list the things you want to disable.
+**Every fix is on by default, unless you turn it off**: a key that isn't in your config uses its default, which is why the config only ever needs to list the things you want to change. The three diagnostics at the bottom of the table are the exception: they start off, and only add detail to the log.
 
-When you update the mod, any keys added by the new version are appended to your existing config on the next boot, with your own settings left untouched, so new fixes arrive enabled and the file stays complete without you editing anything.
+When you update the mod, any keys added by the new version are appended to your existing config on the next boot, with your own settings left untouched, so a new fix arrives enabled and the file stays complete without you editing anything.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -129,9 +130,15 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_cpsp_fix` | `1` | Fix #7: strip `cpsp` so capitals aren't spaced apart in body text. |
 | `ntf_quote_fontfamily` | `1` | Fix #8: quote the injected font family so numbered names apply. |
 | `ntf_pagecut_trim` | `1` | Fix #9: trim the line boxes so a page edge can't cut through a line. |
+| `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
+| `ntf_pagecut_probe` | `0` | Diagnostic: log the line boxes and where each page boundary landed. |
+| `ntf_order_probe` | `0` | Diagnostic: log the order of chapter load, CSS injection and pagination. |
+| `ntf_page_probe` | `0` | Diagnostic: log what the page actually contains. |
 
 Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.
+
+The three probes are there for bug reports. Each one only writes more to the log. With any of them on, a page is laid out and cut exactly as it is with them off, so leave them at `0` unless a bug report asks for one.
 
 ## Compatibility
 
@@ -175,7 +182,9 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 5. The reader-font fix publishes a new `KepubBookReader` only after its real constructor completes, tracks it through its destructor, and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
 
-6. The in-memory patches (justification and letter-spacing) validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
+6. Fix #10 runs a small script inside the book's own page, because what it has to decide (did the book itself centre this image) can't be written as a styling rule. The script only reads the chapter and sets a style on the few elements it recognises. It adds nothing to the book, sends nothing anywhere, and never touches the book's files. It runs on the reader's own view and nowhere else, and an error in it skips that one update instead of reaching Nickel. [ABOUT.md](ABOUT.md#script-in-the-books-frame) describes it in full.
+
+7. The in-memory patches (justification and letter-spacing) validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
 
 ## Build
 

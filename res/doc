@@ -23,6 +23,12 @@ Fixes:
 - A kepub page edge slicing through a line of text, leaving its letter tops as a thin strip at
   the bottom of the page before it; the line boxes the reader paginates with are trimmed so they
   can't overlap, and it then moves the line onto the next page whole. Works with any font.
+- A centred image moving to the left margin as soon as the text alignment is set to left or
+  justified; the centring the book itself asked for is put back, on those images only. Nothing
+  changes size, so no text moves.
+- (Off by default, not finished.) A large drop cap pushing the line under it down. Turning
+  ntf_dropcap_fix on fixes the spacing, but the paragraph gets shorter after the reader has
+  worked out where its pages end, so paging backwards into that chapter can land you mid-line.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -37,9 +43,16 @@ Fixes:
 - ntf_cpsp_fix:1           strip cpsp so capitals aren't spaced apart in body text (any font)
 - ntf_quote_fontfamily:1   quote the injected reader-font family so digit-token names apply
 - ntf_pagecut_trim:1       trim kepub line boxes so they never overlap and page edges stay clean (any font)
+- ntf_center_images:1      keep a centred image centred when text alignment is set to left
+- ntf_dropcap_fix:0        stop a drop cap pushing the next line down; off, not finished (see above)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
+- ntf_pagecut_probe:0      diagnostic: log the line boxes and where each page boundary landed
+- ntf_order_probe:0        diagnostic: log the order of chapter load, CSS injection and pagination
+- ntf_page_probe:0         diagnostic: log what the page actually contains
 
 A healthy boot logs nothing; problems are always logged regardless, and a mistake in the config
 file (a misspelled setting, an invalid value) turns full verbose logging on for that boot so it
 diagnoses itself. Set ntf_log:1 to also log each
-fix engaging. Changes take effect on reboot. Delete the `uninstall` file and reboot to remove.
+fix engaging. The three probes are for bug reports and only add detail to the log: with any of
+them on, a page is laid out and cut exactly as it is with them off. Changes take effect on
+reboot. Delete the `uninstall` file and reboot to remove.
