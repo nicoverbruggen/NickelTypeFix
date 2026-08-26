@@ -78,43 +78,43 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 
 | original | diff | fixed |
 |---|---|---|
-| ![wobble original](docs/screenshots/wobble.png) | ![wobble diff](docs/highlight/wobble-diff.png) | ![wobble fixed](docs/screenshots/wobble-free.png) |
+| <img src="docs/screenshots/wobble.png" alt="wobble original" width="250"> | <img src="docs/highlight/wobble-diff.png" alt="wobble diff" width="250"> | <img src="docs/screenshots/wobble-free.png" alt="wobble fixed" width="250"> |
 
 ### Fix #2: Vertical (tategaki) CJK text
 
 | original | diff | fixed |
 |---|---|---|
-| ![vertical original](docs/screenshots/cjk-broken.png) | ![vertical diff](docs/highlight/cjk-diff.png) | ![vertical fixed](docs/screenshots/cjk-correct.png) |
+| <img src="docs/screenshots/cjk-broken.png" alt="vertical original" width="250"> | <img src="docs/highlight/cjk-diff.png" alt="vertical diff" width="250"> | <img src="docs/screenshots/cjk-correct.png" alt="vertical fixed" width="250"> |
 
 ### Fix #3: Justified text at koboSpan boundaries
 
 | original | diff | fixed |
 |---|---|---|
-| ![justify original](docs/screenshots/justification-broken.png) | ![justify diff](docs/highlight/justify-diff.png) | ![justify fixed](docs/screenshots/justification-correct.png) |
+| <img src="docs/screenshots/justification-broken.png" alt="justify original" width="250"> | <img src="docs/highlight/justify-diff.png" alt="justify diff" width="250"> | <img src="docs/screenshots/justification-correct.png" alt="justify fixed" width="250"> |
 
 ### Fix #5: Letter-spacing on spaces
 
 | original | diff | fixed |
 |---|---|---|
-| ![letter-spacing original](docs/screenshots/letterspacing-broken.png) | ![letter-spacing diff](docs/highlight/letterspacing-diff.png) | ![letter-spacing fixed](docs/screenshots/letterspacing-correct.png) |
+| <img src="docs/screenshots/letterspacing-broken.png" alt="letter-spacing original" width="250"> | <img src="docs/highlight/letterspacing-diff.png" alt="letter-spacing diff" width="250"> | <img src="docs/screenshots/letterspacing-correct.png" alt="letter-spacing fixed" width="250"> |
 
 ### Fix #7: Capital spacing (cpsp)
 
 | original | diff | fixed |
 |---|---|---|
-| ![capital spacing original](docs/screenshots/cap-broken.png) | ![capital spacing diff](docs/highlight/cap-diff.png) | ![capital spacing fixed](docs/screenshots/cap-correct.png) |
+| <img src="docs/screenshots/cap-broken.png" alt="capital spacing original" width="250"> | <img src="docs/highlight/cap-diff.png" alt="capital spacing diff" width="250"> | <img src="docs/screenshots/cap-correct.png" alt="capital spacing fixed" width="250"> |
 
 ### Fix #9: Page-boundary clipping
 
 | original | diff | fixed |
 |---|---|---|
-| ![page-boundary original](docs/screenshots/pagecut-broken.png) | ![page-boundary diff](docs/highlight/pagecut-diff.png) | ![page-boundary fixed](docs/screenshots/pagecut-correct.png) |
+| <img src="docs/screenshots/pagecut-broken.png" alt="page-boundary original" width="250"> | <img src="docs/highlight/pagecut-diff.png" alt="page-boundary diff" width="250"> | <img src="docs/screenshots/pagecut-correct.png" alt="page-boundary fixed" width="250"> |
 
 ### Fixes #10 and #11: Centred images and drop caps
 
 | original | diff | fixed |
 |---|---|---|
-| ![openers original](docs/screenshots/opener-broken.png) | ![openers diff](docs/highlight/opener-diff.png) | ![openers fixed](docs/screenshots/opener-correct.png) |
+| <img src="docs/screenshots/opener-broken.png" alt="openers original" width="250"> | <img src="docs/highlight/opener-diff.png" alt="openers diff" width="250"> | <img src="docs/screenshots/opener-correct.png" alt="openers fixed" width="250"> |
 
 ## Configuration
 
