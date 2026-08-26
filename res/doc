@@ -26,9 +26,10 @@ Fixes:
 - A centred image moving to the left margin as soon as the text alignment is set to left or
   justified; the centring the book itself asked for is put back, on those images only. Nothing
   changes size, so no text moves.
-- (Off by default, not finished.) A large drop cap pushing the line under it down. Turning
-  ntf_dropcap_fix on fixes the spacing, but the paragraph gets shorter after the reader has
-  worked out where its pages end, so paging backwards into that chapter can land you mid-line.
+- A large drop cap at the start of a chapter pushing the line under it down, so the first two
+  lines sit further apart than the rest; the drop cap is stopped from inflating its line, early
+  enough that the reader counts its pages from the corrected layout. A drop cap the book floats
+  already behaves correctly and is left alone.
 
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
@@ -44,7 +45,7 @@ Fixes:
 - ntf_quote_fontfamily:1   quote the injected reader-font family so digit-token names apply
 - ntf_pagecut_trim:1       trim kepub line boxes so they never overlap and page edges stay clean (any font)
 - ntf_center_images:1      keep a centred image centred when text alignment is set to left
-- ntf_dropcap_fix:0        stop a drop cap pushing the next line down; off, not finished (see above)
+- ntf_dropcap_fix:1        stop an oversized drop cap pushing the line under it down
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 - ntf_pagecut_probe:0      diagnostic: log the line boxes and where each page boundary landed
 - ntf_order_probe:0        diagnostic: log the order of chapter load, CSS injection and pagination

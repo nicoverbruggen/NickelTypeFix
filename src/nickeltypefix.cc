@@ -1894,11 +1894,23 @@ static void ntf_order_mark(const char *what, void *self, int arg) {
     NTF_LOG("order: %3u  %-34s self=%p arg=%d gui=%d", n, what, self, arg,
         ntf_on_qt_thread() ? 1 : 0);
 }
+static void ntf_run_page_script(void *view, bool images, bool dropcap, bool probe);
+static bool ntf_dropcap_fix();
+static bool ntf_center_images();
+
 static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
 static void (*real_wv_webkitViewLoadFinished)(void *) = nullptr;
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
     ntf_order_mark("KepubBookReaderBase::loadFinished", self, ok ? 1 : 0);
+    // FIX 11 runs here, and only here. The order probe shows locatePages running one step
+    // inside this call, so this is the last moment a layout change still reaches the page
+    // table. The drop-cap fix shortens a paragraph. Run it any later and the table still
+    // describes the taller layout, and paging back into the chapter lands mid-line.
+    // Uses the tracked reader view rather than self: the two share an address here, but the
+    // tracked pointer is the one we know arrived as a WebkitView.
+    if (ok && ntf_enabled() && ntf_on_qt_thread() && ntf_kepub_reader_view)
+        ntf_run_page_script(ntf_kepub_reader_view, ntf_center_images(), ntf_dropcap_fix(), false);
     if (real_kbrb_loadFinished) real_kbrb_loadFinished(self, ok);
     ntf_order_mark("KepubBookReaderBase::loadFinished RET", self, ok ? 1 : 0);
 }
@@ -1934,7 +1946,7 @@ void _ntf_wv_webkitViewLoadFinished(void *self) {
 static QVariant (*ntf_wv_evaluateJavaScript)(void *view, QString script) = nullptr;
 
 static bool ntf_center_images() { return ntf_global_config_bool("ntf_center_images", true); }
-static bool ntf_dropcap_fix()   { return ntf_global_config_bool("ntf_dropcap_fix", false); }
+static bool ntf_dropcap_fix()   { return ntf_global_config_bool("ntf_dropcap_fix", true); }
 
 // Built once per call; kept as one string so the whole pass is a single JS entry.
 static QString ntf_build_page_script(bool images, bool dropcap) {
@@ -1966,13 +1978,25 @@ static QString ntf_build_page_script(bool images, bool dropcap) {
           "if(!p||!p.children||p.children.length!==1)continue;"
           "if((p.textContent||'').replace(/\\s/g,'').length)continue;"
           "if(!authorCentred(p))continue;"
-          // Put the alignment back on the BLOCK, as an inline style with priority, which
-          // beats the reader's !important rule. Deliberately not display:block + auto
-          // margins: that changes the image's formatting context and reflows everything
-          // below it, and a page table built before the reflow then lands the view
-          // mid-line. This changes no boxes, only where the image sits inside its own.
+          // Intent is not enough on its own: if the image already sits centred, changing it
+          // reflows the text below for nothing. Measure it and leave it alone. This makes
+          // the whole pass a no-op whenever the reader is not overriding the book, which is
+          // the common case.
+          "var gr=g.getBoundingClientRect(),br=p.getBoundingClientRect();"
+          "if(!(gr.width>0&&br.width>0))continue;"
+          "if(Math.abs((gr.left-br.left)-(br.right-gr.right))<=2)continue;"
+          // Centre it three ways, because which one bites depends on the image's own box.
+          // text-align on the block moves an inline image; auto margins move a block one and
+          // do nothing to an inline one. On this book text-align alone was not enough, so
+          // display:block is set as well, which is what worked before we removed it.
+          // That does reflow the text below. It is safe here and only here: this pass runs
+          // from loadFinished, ahead of locatePages, so the page table is built on the
+          // result. Running it from the CSS seam again would strand the view mid-line.
           "g.setAttribute(M+'-img','1');"
           "p.style.setProperty('text-align','center','important');"
+          "g.style.setProperty('display','block','important');"
+          "g.style.setProperty('margin-left','auto','important');"
+          "g.style.setProperty('margin-right','auto','important');"
           "n++;}");
     }
     if (dropcap) {
@@ -1988,6 +2012,14 @@ static QString ntf_build_page_script(bool images, bool dropcap) {
           "if(c.getAttribute(M+'-dc'))continue;"
           "var cs=window.getComputedStyle,fs=parseFloat(cs(c).fontSize),"
           "pf=parseFloat(cs(p).fontSize);"
+          // A floated drop cap is already correct: the float is taken out of the line box,
+          // so it never pushes the next line down and there is nothing here to fix. Worse,
+          // "fixing" it breaks it. float forces display:block, so the inline-block below is
+          // ignored while height:1em still applies, and the float collapses to one line tall
+          // with the second line of text running through it. Same for a positioned one.
+          "var fl=cs(c).cssFloat;if(fl===undefined)fl=cs(c).getPropertyValue('float');"
+          "if(fl&&fl!=='none')continue;"
+          "if(cs(c).position&&cs(c).position!=='static')continue;"
           "if(!(fs>pf*1.6))continue;"
           "if((c.textContent||'').trim().length>2)continue;"
           "c.setAttribute(M+'-dc','1');"
@@ -2016,10 +2048,18 @@ static QString ntf_build_page_probe() {
       "o.push('gmcr='+(window.getMatchedCSSRules?1:0));"
       "var im=D.getElementsByTagName('img');o.push('img='+im.length);"
       "for(var i=0;i<im.length&&i<3;i++){var g=im[i],p=g.parentNode;"
+      // The corrective pass climbs out of the koboSpan wrappers to the block that carries
+      // the alignment, so report that block too, not just the immediate parent.
+      "var b=p;while(b&&b.tagName&&b.tagName.toLowerCase()==='span')b=b.parentNode;"
+      "var cs=window.getComputedStyle;"
       "o.push('img'+i+':par='+(p?p.tagName:'-')+'.'+((p&&p.className)||'')"
       "+',kids='+((p&&p.children.length)||0)"
       "+',txt='+(((p&&p.textContent)||'').replace(/\\s/g,'').length)"
-      "+',ta='+(p?window.getComputedStyle(p).textAlign:'-'));}"
+      "+',ta='+(p?cs(p).textAlign:'-')"
+      "+',disp='+cs(g).display"
+      "+',w='+g.offsetWidth+'/'+(b?b.offsetWidth:0)"
+      "+',blk='+(b?b.tagName+'.'+(b.className||''):'-')"
+      "+',blkta='+(b?cs(b).textAlign:'-'));}"
       "var ps=D.getElementsByTagName('p');o.push('p='+ps.length);"
       "var shown=0;"
       "for(var i=0;i<ps.length&&shown<4;i++){var q=ps[i],c=q.firstElementChild;"
@@ -2036,8 +2076,7 @@ static QString ntf_build_page_probe() {
 static bool ntf_page_probe() { return ntf_global_config_bool("ntf_page_probe", false); }
 
 // Run the pass. Reader's own view only, GUI thread only, and never allowed to throw.
-static void ntf_run_page_script(void *view) {
-    bool images = ntf_center_images(), dropcap = ntf_dropcap_fix(), probe = ntf_page_probe();
+static void ntf_run_page_script(void *view, bool images, bool dropcap, bool probe) {
     if (!images && !dropcap && !probe) return;
     if (!ntf_wv_evaluateJavaScript) return;
     if (!(ntf_kepub_reader_view == view
@@ -2054,7 +2093,11 @@ static void ntf_run_page_script(void *view) {
         }
         if (images || dropcap) {
             QVariant r = ntf_wv_evaluateJavaScript(view, ntf_build_page_script(images, dropcap));
-            NTF_DBG("page script: view %p adjusted %d element(s)", view, r.toInt());
+            // Name the pass: the two run from different seams now, and a bare count cannot
+            // be told apart in a log when both report the same number.
+            NTF_DBG("page script (%s): view %p adjusted %d element(s)",
+                images && dropcap ? "images+dropcap" : images ? "images" : "dropcap",
+                view, r.toInt());
         }
     } catch (...) {
         NTF_LOG("Note: the page-inspection fix skipped one update after an internal error.");
@@ -2382,8 +2425,11 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
     }
     ntf_order_mark("WebkitView::addCssToHtml", self, -1);
     if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
-    // The CSS is in the live document now, and pagination follows; this is the window.
-    if (ntf_enabled() && ntf_on_qt_thread()) ntf_run_page_script(self);
+    // Pagination has already run for this chapter by the time the CSS lands here (see the
+    // order probe), so no corrective pass belongs at this seam any more; both run from
+    // loadFinished. Only the diagnostic stays, and it reports the untouched document.
+    if (ntf_enabled() && ntf_on_qt_thread() && ntf_page_probe())
+        ntf_run_page_script(self, false, false, true);
 }
 
 // FIX 6 — consume: on the first setCurrentPage after a chapter drew (armed above), re-apply the

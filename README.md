@@ -32,7 +32,8 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | --- | --- | --: |
 | Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
 | Sometimes lines of text seem to be cut off and spread across two page turns. | Trims the boxes the reader breaks pages with so they can't overlap, then moves the line onto the next page whole. Works with any font. | **#9** |
-| Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. No box changes size, so no text moves. | **#10** |
+| Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
+| A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
 
 ### Which font you actually get
 
@@ -131,6 +132,7 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_quote_fontfamily` | `1` | Fix #8: quote the injected font family so numbered names apply. |
 | `ntf_pagecut_trim` | `1` | Fix #9: trim the line boxes so a page edge can't cut through a line. |
 | `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
+| `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 | `ntf_pagecut_probe` | `0` | Diagnostic: log the line boxes and where each page boundary landed. |
 | `ntf_order_probe` | `0` | Diagnostic: log the order of chapter load, CSS injection and pagination. |
@@ -182,7 +184,7 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 5. The reader-font fix publishes a new `KepubBookReader` only after its real constructor completes, tracks it through its destructor, and only consumes a pending chapter repair on the same reader view. A missing lifetime hook disables that repair rather than calling an unverified object.
 
-6. Fix #10 runs a small script inside the book's own page, because what it has to decide (did the book itself centre this image) can't be written as a styling rule. The script only reads the chapter and sets a style on the few elements it recognises. It adds nothing to the book, sends nothing anywhere, and never touches the book's files. It runs on the reader's own view and nowhere else, and an error in it skips that one update instead of reaching Nickel. [ABOUT.md](ABOUT.md#script-in-the-books-frame) describes it in full.
+6. Fixes #10 and #11 run a small script inside the book's own page, because what they have to decide (did the book itself centre this image, is this letter a drop cap) can't be written as a styling rule. The script only reads the chapter and sets a style on the few elements it recognises. It adds nothing to the book, sends nothing anywhere, and never touches the book's files. It runs on the reader's own view and nowhere else, and an error in it skips that one update instead of reaching Nickel. [ABOUT.md](ABOUT.md#script-in-the-books-frame) describes it in full.
 
 7. The in-memory patches (justification and letter-spacing) validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
 
