@@ -312,7 +312,7 @@ An earlier version read only the second case and ran the script from `addCssToHt
 
 Running only from `loadFinished` covers the settings change too, because of what the script writes. It sets inline styles on elements in the live DOM and marks them, and a settings change re-paginates the same document without reloading it, so those styles and marks are still there and still apply at the new font size. The correction survives; it does not need re-applying. Putting a corrective pass back on the CSS seam would reintroduce exactly the bug above, since both fixes now change vertical layout.
 
-**What it does.** It reads the chapter and sets inline styles on the elements it can identify: `text-align` on a block holding a centred image, `display` and auto side margins on the image itself, and `display`, `height` and `line-height` on a drop-cap span. That is all it writes. It adds no elements, reads nothing from outside the page, sends nothing anywhere, and never touches the book's files on disk. It still has to be idempotent, because a chapter can be loaded more than once in a session: it marks each element it touches with a `data-ntf` attribute, skips a marked element next time, and returns immediately when there is nothing to do. With both fixes and the page probe off, no script is built and none runs.
+**What it does.** It reads the chapter and sets inline styles on the elements it can identify: `text-align` on a block holding a centred image, `display` and auto side margins on the image itself, and `display`, `height` and `line-height` on a drop-cap span. That is all it writes. It adds no elements, reads nothing from outside the page, sends nothing anywhere, and never touches the book's files on disk. It still has to be idempotent, because a chapter can be loaded more than once in a session: it marks each element it touches with a `data-ntf` attribute, skips a marked element next time, and returns immediately when there is nothing to do. In a release build, no script is built or run when both fixes are off. Development builds still run the page probe.
 
 One WebKit detail matters. A style write only marks the render tree dirty; geometry is recomputed later, and pagination reads the tree straight after this call. The script therefore reads `document.body.offsetHeight` to force the recompute synchronously, but only when it actually changed something, so the common no-op pass costs nothing.
 
@@ -320,12 +320,12 @@ One WebKit detail matters. A style write only marks the render tree dirty; geome
 
 ---
 
-## Diagnostics
+## Development probes
 
-Three config keys turn on extra logging. All default to `0`, all are observation only, and none of them changes anything about how a page is rendered or cut. They exist so a bug report can carry the measurements instead of a description.
+`NTF_DEV_BUILD=1` compiles two always-on probes into the mod. Release builds omit their code, hooks, symbol lookups, and strings. Both probes observe only and do not change how a page is rendered or cut.
 
-- `ntf_pagecut_probe` dumps the kepub line boxes as the page walk received them, on both sides of Fix 9's trim in the same pass, names every box the trim's guards refused, and reads each placed page boundary back out of the finished page table. Every probe hook calls the real function first and hands its result back unchanged, so a boot with the probe on paginates byte-identically to the same boot with it off.
-- `ntf_page_probe` writes one line describing what the chapter actually contains: how many images there are, what their parent blocks look like, and which paragraphs start with an oversized element. It was written because the Fix 10 script matched nothing on a real store kepub, and store books are converted by Kobo rather than by kepubify, so the markup nesting is not necessarily the same. Repeated identical lines collapse to the first.
+- The page-boundary probe dumps the kepub line boxes as the page walk received them, on both sides of Fix 9's trim in the same pass, names every box the trim's guards refused, and reads each placed page boundary back out of the finished page table. Every extra hook calls the real function first and hands its result back unchanged.
+- The page probe writes one line describing what the chapter actually contains: how many images there are, what their parent blocks look like, and which paragraphs start with an oversized element. It was written because the Fix 10 script matched nothing on a real store kepub, and store books are converted by Kobo rather than by kepubify, so the markup nesting is not necessarily the same. Repeated identical lines collapse to the first.
 
 ---
 
@@ -344,7 +344,7 @@ A fix's edits are all located and verified before *any* is written (both-or-noth
 
 - The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
 - The hooks and lookups (Fixes 1, 2, and 6 through 11) bind exact symbols and are `optional`; a rename makes that fix inert and leaves the rest running.
-- The diagnostics (`ntf_pagecut_probe`, `ntf_page_probe`) are off by default and observe only. Their hooks call the real function first and pass its result back, so a page is laid out and cut identically whether they are on or off.
+- Development probes observe only. Their extra hooks call the real function first and pass its result back, so a page is laid out and cut identically. Release builds do not contain them.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - Logging is quiet by default: a healthy boot writes nothing to `nickel-type-fix.log`. Problems (a fix that can't apply, a failed write, a safety trip, a mistake in the config file) are always logged, and a config mistake also switches full verbose logging on for that boot. Set `ntf_log:1` to log everything, so a single boot shows which fixes engaged.
 - Nothing is written to any device library on disk; a boot without the mod is stock.

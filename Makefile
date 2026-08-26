@@ -14,6 +14,14 @@ override CFLAGS   += -Wall -Wextra -Werror -fvisibility=hidden
 override CXXFLAGS += -std=gnu++11 -Wall -Wextra -Werror -Wno-missing-field-initializers -fvisibility=hidden -fvisibility-inlines-hidden
 override KOBOROOT += res/doc:$(NTF_CONFIG_DIR)/doc res/uninstall:$(NTF_CONFIG_DIR)/uninstall
 
+NTF_DEV_BUILD ?= 0
+ifneq ($(NTF_DEV_BUILD),0)
+ifneq ($(NTF_DEV_BUILD),1)
+$(error NTF_DEV_BUILD must be 0 or 1)
+endif
+endif
+override CPPFLAGS += -DNTF_DEV_BUILD=$(NTF_DEV_BUILD)
+
 override SKIPCONFIGURE += strip
 strip:
 	$(STRIP) --strip-unneeded src/libnickeltypefix.so

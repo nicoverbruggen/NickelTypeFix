@@ -13,8 +13,8 @@
 //   8. Reader-font quoting   — quote the injected reader-font family so digit-token names hold (libnickel)   [ntf_quote_fontfamily]
 //   9. Page-boundary clipping — trim the kepub line boxes so they can't overlap, which stops the
 //      pagination walk slicing a line at a page edge (libnickel)   [ntf_pagecut_trim]
-//      + a diagnostic probe over the same seams that logs the rect table before and after the
-//      trim and where the walk then placed each boundary (libnickel)   [ntf_pagecut_probe, off]
+//      Development builds also log the rect table before and after the trim and where the walk
+//      placed each boundary.
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 6–9 use NickelHook PLT hooks;
 // fixes 3–5 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -53,6 +53,10 @@
 
 #include "config.h"
 #include "util.h"
+
+#if !defined(NTF_DEV_BUILD) || (NTF_DEV_BUILD != 0 && NTF_DEV_BUILD != 1)
+#error "NTF_DEV_BUILD must be defined as 0 or 1"
+#endif
 
 // ================= shared config =================
 // Return the master switch.  Every hook checks this before changing behavior,
@@ -142,12 +146,6 @@ ntf_center_images:1
 # cap the book floats is already correct and is left alone.
 ntf_dropcap_fix:1
 
-# Fix 9 diagnostic - page-boundary probe (off by default): log how the reader lays out and then cuts
-# a kepub page - the line boxes before and after the trim above, and where each page boundary ended
-# up. Observation only: with this on, pages are cut exactly as they would be with it off; only the
-# log gains detail. Leave it at 0 unless you are collecting a log for a page-edge issue.
-ntf_pagecut_probe:0
-
 # Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
 # that can't apply, a failed write, a safety trip) are always logged regardless, and a problem in this
 # file (a misspelled setting, an invalid value) turns verbose logging on automatically for that boot.
@@ -172,11 +170,9 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_kepub_fontfix",      "1", "Fix 6 - reader-font fallback fix; re-applies the reading font per kepub chapter" },
     { "ntf_cpsp_fix",           "1", "Fix 7 - strip cpsp so capitals aren't spaced apart in body text (any font)" },
     { "ntf_quote_fontfamily",   "1", "Fix 8 - quote the injected reader-font family so digit-token names apply" },
-    { "ntf_page_probe",         "0", "debug: report what the page actually contains, so a fix can be aimed" },
     { "ntf_dropcap_fix",        "1", "Fix 11 - stop an oversized drop cap pushing the next line down" },
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
     { "ntf_pagecut_trim",       "1", "Fix 9 - trim kepub line boxes so they never overlap and page edges stay clean (any font)" },
-    { "ntf_pagecut_probe",      "0", "Fix 9 diagnostic - log the kepub line boxes and page-boundary placement (pages are cut exactly as without it)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
     { NULL, NULL, NULL },
 };
@@ -700,10 +696,11 @@ static void *(*real_wv_sortRects)(QVector<QRect> *rects, int dir) = nullptr;
 
 static bool ntf_pagecut_trim() { return ntf_global_config_bool("ntf_pagecut_trim", true); }
 
+#if NTF_DEV_BUILD
 // ================= FIX 9 diagnostic: page-boundary probe (libnickel) =================
-// Observation only, under its own key (ntf_pagecut_probe, default 0) and independent of the trim:
+// Development builds always run this probe. It is independent of the trim:
 // every probe hook calls the real function first and hands its result back unchanged, so a boot
-// with the probe on paginates byte-identically to the same boot with it off. Restored from the
+// paginates byte-identically with or without the development instrumentation. Restored from the
 // stage-1 probe (commit 8786c3f) after the trim was found to split a two-line heading that stock
 // leaves whole: the offline harness models one rect per line and the two placement modes, but not
 // mergeAdjacentRects, the element-anchor iterator, or the orphan control, so the geometry the walk
@@ -737,8 +734,6 @@ static int (*ntf_wv_totalPages)(void *self) = nullptr;   // dlsym'd; a two-load 
 // IS the boundary the walk chose. First firmware with the symbol is 4.25.15875; on older firmware
 // it stays null and the probe logs everything except the boundary lines.
 static int (*ntf_wv_getPageOffset)(void *self, int page, int *start, int *end) = nullptr;
-
-static bool ntf_pagecut_probe() { return ntf_global_config_bool("ntf_pagecut_probe", false); }
 
 // Per-pass probe state. GUI-thread only (every writer holds ntf_on_qt_thread), so plain data is
 // race-free the same way the Fix 2/6 state is.
@@ -1163,6 +1158,7 @@ static void ntf_pagecut_observe_sort_post(const QVector<QRect> *rects, int dir, 
     ntf_pagecut_cache_rects(rects, dir, ntf_pagecut_rect_ends);
     if (dumped_pre) ntf_pagecut_dump_rects("post", ntf_pagecut_sorted, rects);
 }
+#endif
 
 // NOTE: "letter-spacing on spaces" (ntf_letterspace_spaces) is implemented as an in-memory byte patch
 // alongside the justification fixes below (see LSP_ANCHOR / NTF_JUSTIFY_FIXES), not a hook. Root cause:
@@ -1623,12 +1619,17 @@ static int ntf_init() {
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
         (void *)ntf_getUserStyleSheetUrl, (void *)ntf_wv_webView, (void *)real_kepubReaderCtor,
         (void *)real_kepubReaderDtor, (void *)ntf_writingDirectionFromString);
-    // FIX 9: the page-boundary trim's resolved seams and its config switch. Logged unconditionally
-    // like the rest of the startup block, so an attached log shows whether the fix could attach.
-    NTF_LOG("startup: pagecut trim=%d probe=%d syms wvLocatePages=%p sortRects=%p cutPage=%p kbrbLocatePages=%p wvFontSize=%p wvTotalPages=%p wvGetPageOffset=%p",
-        ntf_pagecut_trim(), ntf_pagecut_probe(), (void *)real_wv_locatePages, (void *)real_wv_sortRects,
+    // FIX 9: log the page-boundary trim's resolved seams unconditionally so an attached log shows
+    // whether the fix could attach. Development builds include the probe-only seams as well.
+#if NTF_DEV_BUILD
+    NTF_LOG("startup: pagecut trim=%d dev-probes=1 syms wvLocatePages=%p sortRects=%p cutPage=%p kbrbLocatePages=%p wvFontSize=%p wvTotalPages=%p wvGetPageOffset=%p",
+        ntf_pagecut_trim(), (void *)real_wv_locatePages, (void *)real_wv_sortRects,
         (void *)real_wv_cutPage, (void *)real_kbrb_locatePages, (void *)ntf_wv_fontSize,
         (void *)ntf_wv_totalPages, (void *)ntf_wv_getPageOffset);
+#else
+    NTF_LOG("startup: pagecut trim=%d syms wvLocatePages=%p sortRects=%p",
+        ntf_pagecut_trim(), (void *)real_wv_locatePages, (void *)real_wv_sortRects);
+#endif
     if (ntf_writingDirectionFromString) {
         ntf_wd_vrl = ntf_writingDirectionFromString(QStringLiteral("vertical-rl"));
         ntf_wd_vlr = ntf_writingDirectionFromString(QStringLiteral("vertical-lr"));
@@ -1890,9 +1891,12 @@ public:
 // ascending by start (dir == 0: by top), which the forward scan for the next top relies on; an
 // out-of-order rect only makes the scan skip it, never a wrong trim. Returns the number trimmed.
 //
-// `detail` is the probe's key being on for this pass: it only adds a log line per refused rect, so
-// what the function does to the vector is the same either way.
+// `detail` is true only when a development probe owns this pass. It adds a log line per refused
+// rect but does not change what the function does to the vector.
 static int ntf_pagecut_trim_rects(QVector<QRect> *rects, int *guard_skips, bool detail) {
+#if !NTF_DEV_BUILD
+    (void)detail;
+#endif
     if (guard_skips) *guard_skips = 0;
     int n = rects->size();
     if (n <= 1) return 0;
@@ -1922,12 +1926,16 @@ static int ntf_pagecut_trim_rects(QVector<QRect> *rects, int *guard_skips, bool 
         // are really consecutive lines have similar heights, so require that before trimming.
         if (2 * (h < next_h ? h : next_h) < (h > next_h ? h : next_h)) {
             refused++;
+#if NTF_DEV_BUILD
             if (detail) ntf_pagecut_log_refusal(i, top, h, gap, d[j].y(), next_h, "next rect is not a line");
+#endif
             continue;
         }
         if (h - gap > h / 4) {                  // shifted run on the same line, not a next line
             refused++;
+#if NTF_DEV_BUILD
             if (detail) ntf_pagecut_log_refusal(i, top, h, gap, d[j].y(), next_h, "trim exceeds h/4");
+#endif
             continue;
         }
         d[i].setHeight((int)gap);               // 0 < gap < h fits an int; end touches next top
@@ -1979,25 +1987,27 @@ void *_ntf_wv_locatePages(void *self, int reload) {
             ntf_pagecut_trim_armed = false;
         }
     }
-    // The probe, if its key is on. It sits after the arming so the trim's behaviour does not depend
-    // on it at all, and its frame closes before the trim's, which only means the pass-end lines are
-    // written while the pass is still armed — nothing reads the arming from there.
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
+    // Development instrumentation sits after the arming so the trim's behaviour does not depend on
+    // it. Its frame closes before the trim's, while the pass is still armed.
+#if NTF_DEV_BUILD
+    bool probing = ntf_enabled();
     bool on_gui = probing && ntf_on_qt_thread();
     if (probing && !on_gui && ntf_pagecut_stray_ok())
         NTF_LOG("pagecut probe: stray locatePages (tid=%lx): view=%p reload=%d",
             (unsigned long)pthread_self(), self, reload);
     ntf_pagecut_pass_frame probe(self, reload, on_gui, false);
+#endif
     return real_wv_locatePages(self, reload);
 }
 
+#if NTF_DEV_BUILD
 // FIX 9 probe — the annotation path. KepubBookReaderBase::locatePages is virtual and a normal
 // reader pass reaches it through a vtable slot this hook never sees, so it fires only for the two
 // PLT call sites in the annotation refresh. Its whole job is to mark such a pass (reader=1 in the
 // pass-end line); the base call it makes immediately is what the WebkitView hook above brackets.
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kbrb_locatePages(void *self, int reload) {
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
+    bool probing = ntf_enabled();
     bool on_gui = probing && ntf_on_qt_thread();
     if (probing && !on_gui && ntf_pagecut_stray_ok())
         NTF_LOG("pagecut probe: stray reader locatePages (tid=%lx): view=%p reload=%d",
@@ -2015,7 +2025,7 @@ void *_ntf_kbrb_locatePages(void *self, int reload) {
 extern "C" __attribute__((visibility("default")))
 int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) {
     int ret = real_wv_cutPage(rects, start, limit, dir);
-    if (!ntf_enabled() || !ntf_pagecut_probe()) return ret;
+    if (!ntf_enabled()) return ret;
     try {
         if (!__atomic_exchange_n(&ntf_pagecut_cut_seen, true, __ATOMIC_RELAXED))
             NTF_LOG("pagecut probe: first cutPage call of this boot (tid=%lx)", (unsigned long)pthread_self());
@@ -2035,6 +2045,7 @@ int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) 
     }
     return ret;
 }
+#endif
 
 // FIX 9 — the trim, and the probe's view of it. sortRectsByStart's one caller sits past
 // locatePages' early exits and right before the page walk, so the vector it just sorted is exactly
@@ -2045,8 +2056,10 @@ int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) 
 extern "C" __attribute__((visibility("default")))
 void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
     void *ret = real_wv_sortRects(rects, dir);
-    bool probing = ntf_enabled() && ntf_pagecut_probe();
-    bool probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
+    bool probe_here = false;
+#if NTF_DEV_BUILD
+    bool probing = ntf_enabled();
+    probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
     bool dumped_pre = false;
     if (probe_here) {
         try {
@@ -2055,6 +2068,7 @@ void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
             NTF_LOG("Note: the page-boundary probe skipped one observation after an internal error.");
         }
     }
+#endif
     if (ntf_enabled() && ntf_pagecut_trim() && dir == 0 && rects
         && ntf_pagecut_trim_armed && ntf_on_qt_thread()) {
         try {
@@ -2065,6 +2079,7 @@ void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
             NTF_LOG("Note: the page-boundary trim skipped one pass after an internal error.");
         }
     }
+#if NTF_DEV_BUILD
     if (probe_here) {
         try {
             ntf_pagecut_observe_sort_post(rects, dir, dumped_pre);
@@ -2075,6 +2090,7 @@ void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
         NTF_LOG("pagecut probe: stray sortRects (tid=%lx depth=%d): n=%d dir=%d",
             (unsigned long)pthread_self(), ntf_pagecut_depth, rects ? rects->size() : -1, dir);
     }
+#endif
     return ret;
 }
 
@@ -2217,7 +2233,8 @@ static QString ntf_build_page_script(bool images, bool dropcap) {
 }
 
 
-// Diagnostic pass (key ntf_page_probe, default 0). The corrective script above matched
+#if NTF_DEV_BUILD
+// Development diagnostic pass. The corrective script above matched
 // nothing on a real store kepub, and store books are converted by Kobo rather than by
 // kepubify, so the markup nesting is not necessarily the same. Rather than guess at it,
 // this reports what the document actually contains. Returns a short string, logged as-is.
@@ -2251,15 +2268,19 @@ static QString ntf_build_page_probe() {
       "+',inner='+(c.firstElementChild?c.firstElementChild.tagName+'.'+(c.firstElementChild.className||''):'-'));}"
       "return o.join(' | ');}catch(e){return 'ERR '+e;}})();");
 }
-static bool ntf_page_probe() { return ntf_global_config_bool("ntf_page_probe", false); }
+#endif
 
 // Run the pass. Reader's own view only, GUI thread only, and never allowed to throw.
 static void ntf_run_page_script(void *view, bool images, bool dropcap, bool probe) {
+#if !NTF_DEV_BUILD
+    (void)probe;
+#endif
     if (!images && !dropcap && !probe) return;
     if (!ntf_wv_evaluateJavaScript) return;
     if (!(ntf_kepub_reader_view == view
           || (!ntf_kepub_reader_view && ntf_learn_reader_view(view)))) return;
     try {
+#if NTF_DEV_BUILD
         if (probe) {
             static QString last;
             QVariant d = ntf_wv_evaluateJavaScript(view, ntf_build_page_probe());
@@ -2269,6 +2290,7 @@ static void ntf_run_page_script(void *view, bool images, bool dropcap, bool prob
                 NTF_LOG("page probe: %s", cur.toUtf8().constData());
             }
         }
+#endif
         if (images || dropcap) {
             QVariant r = ntf_wv_evaluateJavaScript(view, ntf_build_page_script(images, dropcap));
             NTF_DBG("page script (%s): view %p adjusted %d element(s)",
@@ -2330,14 +2352,15 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection", .sym_new = "_ntf_wv_sortRects",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_sortRects), .desc = "fix 9: trim the pass's line rects", .optional = true },
     //libnickel 4.21.15015 * _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
-    // FIX 9 diagnostic — the two extra seams the probe needs. Both are strict passthroughs and both
-    // are inert past a config check with ntf_pagecut_probe off (the default).
+#if NTF_DEV_BUILD
+    // FIX 9 development probe: two extra strict-passthrough seams.
     { .sym = "_ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection", .sym_new = "_ntf_wv_cutPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_cutPage), .desc = "fix 9 probe: observe straddle page cuts", .optional = true },
     //libnickel 4.21.15015 * _ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection
     { .sym = "_ZN19KepubBookReaderBase11locatePagesEb", .sym_new = "_ntf_kbrb_locatePages",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_locatePages), .desc = "fix 9 probe: mark annotation-path passes", .optional = true },
     //libnickel 4.21.15015 * _ZN19KepubBookReaderBase11locatePagesEb
+#endif
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
@@ -2352,12 +2375,14 @@ static struct nh_dlsym NickelTypeFixDlsym[] = {
     // NOTE: an earlier revision resolved `_ZThn24_N15KepubBookReaderD1Ev` here and treated its
     // existence as proof that WebkitView is the +24 subobject. That thunk belongs to a different
     // base at +24; the view offset is learned per book instead (ntf_learn_reader_view).
+#if NTF_DEV_BUILD
     { .name = "_ZN10WebkitView8fontSizeEv", .out = nh_symoutptr(ntf_wv_fontSize), .desc = "fix 9 probe: log the reading font size per pass", .optional = true },
     //libnickel 4.21.15015 * _ZN10WebkitView8fontSizeEv
     { .name = "_ZNK10WebkitView10totalPagesEv", .out = nh_symoutptr(ntf_wv_totalPages), .desc = "fix 9 probe: log each pass's resulting page count", .optional = true },
     //libnickel 4.21.15015 * _ZNK10WebkitView10totalPagesEv
     { .name = "_ZNK10WebkitView13getPageOffsetEiRiS0_", .out = nh_symoutptr(ntf_wv_getPageOffset), .desc = "fix 9 probe: read back each placed page boundary", .optional = true },
     //libnickel 4.25.15875 * _ZNK10WebkitView13getPageOffsetEiRiS0_
+#endif
     {0},
 };
 
@@ -2582,8 +2607,10 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         NTF_LOG("Note: a CSS-injection fix skipped one update after an internal error (likely low memory).");
     }
     if (real_wv_addCssToHtml) real_wv_addCssToHtml(self, css);
-    // Pagination has already run by the time the CSS lands here, so only the diagnostic
-    // belongs at this seam; both fixes run from loadFinished.
-    if (ntf_enabled() && ntf_on_qt_thread() && ntf_page_probe())
+    // Development builds report the resulting document here. The corrective scripts run from
+    // loadFinished because pagination has already run by the time the CSS lands at this seam.
+#if NTF_DEV_BUILD
+    if (ntf_enabled() && ntf_on_qt_thread())
         ntf_run_page_script(self, false, false, true);
+#endif
 }

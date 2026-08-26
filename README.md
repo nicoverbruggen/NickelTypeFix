@@ -120,7 +120,7 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 
 Settings are read from `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on the first boot; there's no shipped template file). Changes take effect on reboot.
 
-**Every fix is on by default, unless you turn it off**: a key that isn't in your config uses its default, which is why the config only ever needs to list the things you want to change. The three diagnostics at the bottom of the table are the exception: they start off, and only add detail to the log.
+**Every fix is on by default, unless you turn it off**: a key that isn't in your config uses its default, which is why the config only ever needs to list the things you want to change.
 
 When you update the mod, any keys added by the new version are appended to your existing config on the next boot, with your own settings left untouched, so a new fix arrives enabled and the file stays complete without you editing anything.
 
@@ -140,12 +140,8 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
-| `ntf_pagecut_probe` | `0` | Diagnostic: log the line boxes and where each page boundary landed. |
-| `ntf_page_probe` | `0` | Diagnostic: log what the page actually contains. |
 
 Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.
-
-The three probes are there for bug reports. Each one only writes more to the log. With any of them on, a page is laid out and cut exactly as it is with them off, so leave them at `0` unless a bug report asks for one.
 
 ## Compatibility
 
@@ -217,6 +213,8 @@ Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook remo
 ## Development
 
 This repository was made with the assistance of large language models. Specifically: Anthropic's Opus 4.8, Opus 5 and Fable 5, as well as OpenAI's GPT 5.5 and 5.6 Sol. 
+
+Development builds can include always-on layout probes that release builds omit. See [CONTRIBUTING.md](CONTRIBUTING.md#development-probes).
 
 These models were incredibly useful when attempting to reverse engineer and diagnose the actual issues. 
 

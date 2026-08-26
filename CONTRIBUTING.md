@@ -16,6 +16,10 @@ This produces `KoboRoot.tgz` at the repo root. `./build.sh <targets>` passes oth
 
 Version stamping: NickelHook.mk bakes `git describe --tags --always --dirty` into `NH_VERSION`: the git tag when you're on one, otherwise a commit hash. `build.sh` keeps `.git` out of what it sends the container, so it reads the version on the host and passes it to make. A local build is stamped like a CI one, with `-dirty` when the tree has uncommitted changes. Outside a checkout there is no version and the logger falls back to `dev`. CI (checkout with `fetch-depth: 0`) produces the authoritative artifacts.
 
+### Development probes
+
+Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD=1 ./build.sh` to compile both probes in. A development build runs them whenever the mod is enabled; there are no probe config keys. The page-boundary probe logs the line boxes before and after Fix 9, its guard refusals, and the resulting page boundaries. The page probe logs a short description of each distinct chapter document. Both observe only and leave pagination unchanged.
+
 ## Testing on a device
 
 1. Copy `KoboRoot.tgz` into the Kobo's hidden `.kobo` folder over USB.

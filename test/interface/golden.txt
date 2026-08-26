@@ -3,11 +3,9 @@ _ntf_FT_Load_Glyph
 _ntf_addApplicationFont
 _ntf_cwv_setWritingDirection
 _ntf_kbrb_loadFinished
-_ntf_kbrb_locatePages
 _ntf_kepubReaderCtor
 _ntf_kepubReaderDtor
 _ntf_wv_addCssToHtml
-_ntf_wv_cutPage
 _ntf_wv_locatePages
 _ntf_wv_setCurrentPage
 _ntf_wv_sortRects
@@ -21,8 +19,6 @@ _ZN10WebkitView14setCurrentPageEi
 _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
 _ZN10WebkitView22webkitViewLoadFinishedEv
 _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
-_ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection
-_ZN10WebkitView8fontSizeEv
 _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
 _ZN13CustomWebView19setWritingDirectionE16WritingDirection
 _ZN13QFontDatabase18addApplicationFontERK7QString
@@ -30,10 +26,7 @@ _ZN15KepubBookReader12addCssToHtmlE7QString
 _ZN15KepubBookReader12pageStyleCssEb
 _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
 _ZN15KepubBookReaderD1Ev
-_ZN19KepubBookReaderBase11locatePagesEb
 _ZN19KepubBookReaderBase12loadFinishedEb
-_ZNK10WebkitView10totalPagesEv
-_ZNK10WebkitView13getPageOffsetEiRiS0_
 _ZNK10WebkitView7webViewEv
 _ZNK12QWebSettings17userStyleSheetUrlEv
 _ZNK13CustomWebView8settingsEv
@@ -54,8 +47,6 @@ ntf_kepub_fontfix = '1'
 ntf_letterspace_spaces = '1'
 ntf_log = '0'
 ntf_no_hinting = '1'
-ntf_page_probe = '0'
-ntf_pagecut_probe = '0'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
 ntf_vertfix = '1'
@@ -72,7 +63,6 @@ ntf_kepub_fontfix = '1'
 ntf_letterspace_spaces = '1'
 ntf_log = '0'
 ntf_no_hinting = '1'
-ntf_pagecut_probe = '0'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
 ntf_vertfix = '1'
@@ -81,5 +71,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  272
-sha256 22ece81ad468e4b2cc363f64119df382da0d40e0621eaa5e6320285c4267a7d1
+count  243
+sha256 0944c0d1e100c8ba51a7f1f8c1ed5ad20805977615d7d065404ea110e854a7dc

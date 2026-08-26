@@ -4,6 +4,12 @@ set -euo pipefail
 image="${NICKELTC_IMAGE:-ghcr.io/pgaskin/nickeltc:1.0}"
 workdir="${PWD}"
 scratch="${workdir}/tmp/build"
+dev_build="${NTF_DEV_BUILD:-0}"
+
+if [ "${dev_build}" != 0 ] && [ "${dev_build}" != 1 ]; then
+    echo "NTF_DEV_BUILD must be 0 or 1" >&2
+    exit 2
+fi
 
 export COPYFILE_DISABLE=1
 
@@ -38,6 +44,7 @@ tar \
 podman run --rm -i \
     --entrypoint sh \
     --env "NH_BUILD_VERSION=${version}" \
+    --env "NTF_DEV_BUILD=${dev_build}" \
     "${image}" \
     -lc '
         set -eu
@@ -52,6 +59,7 @@ podman run --rm -i \
         export PATH
         make "$@" \
             VERSION="${NH_BUILD_VERSION}" \
+            NTF_DEV_BUILD="${NTF_DEV_BUILD}" \
             CROSS_COMPILE=arm-nickel-linux-gnueabihf- \
             MOC=/tc/arm-nickel-linux-gnueabihf/arm-nickel-linux-gnueabihf/sysroot/usr/bin/moc \
             RCC=/tc/arm-nickel-linux-gnueabihf/arm-nickel-linux-gnueabihf/sysroot/usr/bin/rcc >&2
