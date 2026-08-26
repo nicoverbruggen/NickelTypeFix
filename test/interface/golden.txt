@@ -60,6 +60,26 @@ ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
 ntf_vertfix = '1'
 
+[fresh-install config file]
+ntf_center_images = '1'
+ntf_cpsp_fix = '1'
+ntf_dropcap_fix = '1'
+ntf_enabled = '1'
+ntf_hinting_allowlist = ''
+ntf_justify_kospan = '1'
+ntf_justify_punct = '1'
+ntf_kepub_fontfix = '1'
+ntf_letterspace_spaces = '1'
+ntf_log = '0'
+ntf_no_hinting = '1'
+ntf_pagecut_probe = '0'
+ntf_pagecut_trim = '1'
+ntf_quote_fontfamily = '1'
+ntf_vertfix = '1'
+
+[table vs file disagreements]
+none
+
 [long string literals]
-count  267
-sha256 76bdeee91a2c18c130f2de58983ce8885069e3218e9ad4665819b86a6f74eac4
+count  272
+sha256 22ece81ad468e4b2cc363f64119df382da0d40e0621eaa5e6320285c4267a7d1

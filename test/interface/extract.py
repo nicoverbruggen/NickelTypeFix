@@ -99,7 +99,33 @@ for secname in (".data.rel.ro", ".data.rel.ro.local", ".data", ".rodata"):
         keys.append(f"{k} = {d!r}")
 out += sorted(set(keys))
 
-# 4. A digest of the long string literals. The injected CSS and the scripts the mod runs
+# 4. The config file the mod writes on a fresh install. This is a separate source of truth
+#    from the table above, and the two silently disagreeing is a bug that ships: the table
+#    only fills in keys an existing file is missing, so a wrong value here reaches every new
+#    install and nothing else notices. Read from the raw bytes rather than the string list,
+#    because the template spans many lines and the list is split on newlines.
+out.append("")
+out.append("[fresh-install config file]")
+written = {}
+# Anchor on the file's own header: "ntf_enabled:" also appears in a log message.
+idx = text.find(b"# NickelTypeFix configuration")
+if idx >= 0:
+    lo = text.rfind(b"\0", 0, idx) + 1
+    hi = text.find(b"\0", idx)
+    tpl = text[lo:hi].decode("utf-8", "replace")
+    written = dict(re.findall(r"^(ntf_[a-z_]+):(.*)$", tpl, re.M))
+for k in sorted(written):
+    out.append(f"{k} = {written[k]!r}")
+
+out.append("")
+out.append("[table vs file disagreements]")
+table = dict(re.match(r"(\S+) = (.*)", k).groups() for k in set(keys))
+bad = [f"{k}: table {v}, file {written[k]!r}"
+       for k, v in sorted(table.items())
+       if k in written and written[k] != v.strip("'")]
+out += bad or ["none"]
+
+# 5. A digest of the long string literals. The injected CSS and the scripts the mod runs
 #    in the book's frame live here, so a change in behaviour that leaves the hook list
 #    untouched still shows up as a different digest.
 longs = sorted({s for s in strs if len(s) >= 40})
