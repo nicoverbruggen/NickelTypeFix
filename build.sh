@@ -11,6 +11,15 @@ if [ "${dev_build}" != 0 ] && [ "${dev_build}" != 1 ]; then
     exit 2
 fi
 
+if command -v podman >/dev/null 2>&1; then
+    container_engine="podman"
+elif command -v docker >/dev/null 2>&1; then
+    container_engine="docker"
+else
+    echo "building NickelTypeFix requires Podman or Docker" >&2
+    exit 127
+fi
+
 export COPYFILE_DISABLE=1
 
 if [ "$#" -eq 0 ]; then
@@ -41,7 +50,7 @@ tar \
     --exclude=src/libnickeltypefix.so \
     -czf "${scratch}/source.tgz" .
 
-podman run --rm -i \
+"${container_engine}" run --rm -i \
     --entrypoint sh \
     --env "NH_BUILD_VERSION=${version}" \
     --env "NTF_DEV_BUILD=${dev_build}" \
