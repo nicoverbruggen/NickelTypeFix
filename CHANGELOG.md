@@ -21,7 +21,7 @@
 - **The supported firmware range now starts at 4.23.15505.** This matches the modern bottom-navigation firmware generation used with NickelMenu and KoboPatch WebUI. Older firmware remains in the compatibility-checker data as historical reference, but it is no longer checked by default or supported by the mod.
 - **New settings are added to your config automatically on update.** The config file is still created once on first boot, but when a later version introduces a key it is now appended to your existing config on the next boot, with your own settings left untouched. An absent key always takes its default, so a new fix arrives in the state it ships in (on, unless the notes above say otherwise) and the file stays complete and self-documenting without any editing on your part.
 - **The log file is now size-capped.** Once it passes 256 KB it rotates to `nickel-type-fix.log.old`, so leaving `ntf_log:1` on can't fill up your device.
-- **The log now says which build and firmware it ran on.** Every boot writes a short startup block whether or not `ntf_log:1` is set, so a log you attach to a bug report is useful without having to turn anything on and reproduce the problem again.
+- **The startup log is complete and easier to scan.** Every boot writes the firmware and a compact list showing whether each feature is enabled and whether it actually attached. A healthy boot writes nothing else unless `ntf_log:1` is set. Problems still log automatically.
 
 ## v0.7
 

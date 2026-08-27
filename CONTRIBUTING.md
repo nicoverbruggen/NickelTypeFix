@@ -30,7 +30,7 @@ Boot safety / recovery: NickelHook's failsafe (`failsafe_delay = 3`) uninstalls 
 
 ## Logs & debugging
 
-The mod logs to `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log` (and to syslog via `nh_log`, viewable with `logread`). Every message carries the mod version; the startup block logs the mod version, the firmware version, the effective config, and the resolved-symbol map, unconditionally, so an attached log is diagnostic even with logging off. A healthy boot writes nothing else. Set `ntf_log:1` in the config for verbose per-fix tracing (a malformed config turns it on automatically so mistakes self-diagnose). The log is size-capped (256 KB) and rotates once to `nickel-type-fix.log.old`.
+The mod logs to `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log` (and to syslog via `nh_log`, viewable with `logread`). Every message carries the mod version. A healthy boot writes the firmware and a compact list showing whether each feature is enabled and active. Active means the feature found every hook or byte patch it needs at startup; it does not mean the feature has already encountered matching book content. Set `ntf_log:1` to include every config value, resolved symbols, and per-fix tracing. Problems always log, and a malformed config turns verbose logging on automatically so mistakes self-diagnose. The log is size-capped at 256 KB and rotates once to `nickel-type-fix.log.old`.
 
 ## Firmware compatibility
 

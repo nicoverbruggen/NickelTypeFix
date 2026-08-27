@@ -12,6 +12,9 @@
 #include "config.h"
 #include "util.h"
 
+bool ntf_log_setup_done = false;
+bool ntf_log_prepend_newline = false;
+
 typedef struct ntf_config_entry_t {
     char *key;
     char *val;
@@ -101,7 +104,6 @@ static void ntf_config_write_default(void) {
         fsync(dir_fd);
         close(dir_fd);
     }
-    NTF_LOG("wrote built-in default config to %s/config", NTF_CONFIG_DIR_DISP);
 }
 
 // Self-heal: after loading an existing config, append any known keys the file is missing (keys a
@@ -190,7 +192,6 @@ static void ntf_config_append_missing(ntf_config_t *cfg) {
         fsync(dir_fd);
         close(dir_fd);
     }
-    NTF_LOG("added missing keys to %s/config", NTF_CONFIG_DIR_DISP);
 }
 
 ntf_config_t *ntf_config_parse(void) {
@@ -200,7 +201,6 @@ ntf_config_t *ntf_config_parse(void) {
 
     FILE *f = fopen(NTF_CONFIG_DIR "/config", "r");
     if (!f && errno == ENOENT) {
-        NTF_LOG("no config file at %s/config; writing a default one", NTF_CONFIG_DIR_DISP);
         ntf_config_write_default();
         f = fopen(NTF_CONFIG_DIR "/config", "r");
     }

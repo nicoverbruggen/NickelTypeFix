@@ -63,9 +63,9 @@
 // so `ntf_enabled:0` is the closest equivalent to removing the plugin without
 // uninstalling it.
 static bool ntf_enabled() { return ntf_global_config_bool("ntf_enabled", true); }
-// Verbose logging is OFF by default: a healthy boot writes nothing. NTF_DBG lines (status/info) appear
-// only when ntf_log is on; NTF_LOG (used for problems: a fix that can't apply, a failed write, a safety
-// trip) always writes, so something going wrong is always visible. A problem in the config itself
+// Verbose logging is OFF by default: a healthy boot writes only the startup table. NTF_DBG lines
+// (status/info) appear only when ntf_log is on; NTF_LOG (used for problems: a fix that can't apply,
+// a failed write, a safety trip) always writes, so something going wrong is always visible. A problem in the config itself
 // (unknown key, malformed line, invalid value) forces verbose logging for the boot — a broken config
 // diagnoses itself in the log.
 static bool ntf_log()     { return ntf_config_problem_seen() || ntf_global_config_bool("ntf_log", false); }
@@ -146,8 +146,8 @@ ntf_center_images:1
 # cap the book floats is already correct and is left alone.
 ntf_dropcap_fix:1
 
-# Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs nothing. Problems (a fix
-# that can't apply, a failed write, a safety trip) are always logged regardless, and a problem in this
+# Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs only the startup table.
+# Problems (a fix that can't apply, a failed write, a safety trip) are always logged, and a problem in this
 # file (a misspelled setting, an invalid value) turns verbose logging on automatically for that boot.
 # 1 = log everything.
 ntf_log:0
@@ -1224,6 +1224,7 @@ static const struct ntf_fix_t NTF_JUSTIFY_FIXES[] = {
         { "letterspace:preletter", "Gui", NULL, LSP_ANCHOR, (int)sizeof(LSP_ANCHOR), 12, LSP_B_ORIG, LSP_REPL, (int)sizeof(LSP_B_ORIG) },
     }, 2 },
 };
+static bool ntf_patch_active[sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0])];
 
 static const unsigned char *ntf_scan(const unsigned char *hay, size_t haylen,
                                      const unsigned char *needle, size_t nlen, int *count) {
@@ -1416,7 +1417,8 @@ static bool ntf_scan_already_patched(const struct ntf_patch_t *p, struct ntf_fin
 }
 
 // Locate + verify every edit in a fix; write them only if all located and verified (both-or-nothing).
-static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
+static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx, bool *active) {
+    *active = false;
     if (!ntf_global_config_bool(fx->cfg_key, fx->cfg_default)) { NTF_DBG("Justification fix (%s) is turned off in config; skipping.", fx->name); return true; }
     const unsigned char *sites[NTF_MAXP]; int restore_prot[NTF_MAXP]; bool already[NTF_MAXP];
     for (int i = 0; i < fx->n; i++) {
@@ -1466,6 +1468,7 @@ static bool ntf_apply_justify_fix(const struct ntf_fix_t *fx) {
         return true;
     }
     NTF_DBG("Justification fix (%s) is active.", fx->name);
+    *active = true;
     return true;
 }
 
@@ -1590,6 +1593,8 @@ static void ntf_remove_superseded(void) {
 }
 
 // ================= init =================
+static void ntf_log_unavailable_fixes();
+static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker);
 static int ntf_init() {
     // NickelHook calls this during plugin loading, before a book is opened. It
     // resolves optional hooks, validates runtime-dependent values, applies the
@@ -1602,35 +1607,32 @@ static int ntf_init() {
     ntf_global_config_get("");                      // prime config before any hook can read it
     if (first_install)
         ntf_remove_superseded();                    // stop the old standalone mods co-loading
-    // Startup block, always logged: mod version, firmware version, effective config, and (below)
-    // the resolved-symbol map. This is what makes a user-attached log diagnostic on an unknown
-    // firmware, so it must not depend on ntf_log:1 or on the mod being enabled.
-    NTF_LOG("startup: NickelTypeFix " NH_VERSION);
-    ntf_log_firmware();
-    NTF_LOG("startup: enabled=%d fixes(wobble/vertical/justify/readerfont)=%d/%d/%d/%d verbose=%d",
-        ntf_enabled(), ntf_no_hinting(), ntf_vertfix(),
-        (ntf_global_config_bool("ntf_justify_kospan", true) || ntf_global_config_bool("ntf_justify_punct", true)),
-        ntf_kepub_fontfix(), ntf_log());
-
-    if (!ntf_enabled()) { NTF_LOG("NickelTypeFix is turned off in its config (ntf_enabled:0); nothing was changed."); return 0; }
+    if (!ntf_enabled()) {
+        ntf_log_fix_statuses(NTF_HINT_MARKER_ABSENT);
+        NTF_DBG("NickelTypeFix is turned off in its config; nothing was changed.");
+        return 0;
+    }
 
     // FIX 2 (vertical): learn the vertical-writing-mode enum values from Nickel itself.
-    NTF_LOG("startup: vertical/reader syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p kepubDtor=%p wdFromString=%p",
+    NTF_DBG("startup: vertical/reader syms cwvSetDir=%p cwvSettings=%p setUserCss=%p getUserCss=%p wvWebView=%p kepubCtor=%p kepubDtor=%p wdFromString=%p",
         (void *)real_cwv_setWritingDirection, (void *)ntf_cwv_settings, (void *)ntf_setUserStyleSheetUrl,
         (void *)ntf_getUserStyleSheetUrl, (void *)ntf_wv_webView, (void *)real_kepubReaderCtor,
         (void *)real_kepubReaderDtor, (void *)ntf_writingDirectionFromString);
-    // FIX 9: log the page-boundary trim's resolved seams unconditionally so an attached log shows
-    // whether the fix could attach. Development builds include the probe-only seams as well.
+    // FIX 9: verbose logs show every resolved seam. Development builds include probe-only seams.
 #if NTF_DEV_BUILD
-    NTF_LOG("startup: pagecut trim=%d dev-probes=1 syms wvLocatePages=%p sortRects=%p cutPage=%p kbrbLocatePages=%p wvFontSize=%p wvTotalPages=%p wvGetPageOffset=%p",
+    NTF_DBG("startup: pagecut trim=%d dev-probes=1 syms wvLocatePages=%p sortRects=%p cutPage=%p kbrbLocatePages=%p wvFontSize=%p wvTotalPages=%p wvGetPageOffset=%p",
         ntf_pagecut_trim(), (void *)real_wv_locatePages, (void *)real_wv_sortRects,
         (void *)real_wv_cutPage, (void *)real_kbrb_locatePages, (void *)ntf_wv_fontSize,
         (void *)ntf_wv_totalPages, (void *)ntf_wv_getPageOffset);
 #else
-    NTF_LOG("startup: pagecut trim=%d syms wvLocatePages=%p sortRects=%p",
+    NTF_DBG("startup: pagecut trim=%d syms wvLocatePages=%p sortRects=%p",
         ntf_pagecut_trim(), (void *)real_wv_locatePages, (void *)real_wv_sortRects);
 #endif
-    if (ntf_writingDirectionFromString) {
+    ntf_log_unavailable_fixes();
+
+    bool vertical_symbols_ready = real_cwv_setWritingDirection && ntf_writingDirectionFromString
+        && ntf_cwv_settings && ntf_setUserStyleSheetUrl && ntf_wv_webView && real_wv_addCssToHtml;
+    if (vertical_symbols_ready) {
         ntf_wd_vrl = ntf_writingDirectionFromString(QStringLiteral("vertical-rl"));
         ntf_wd_vlr = ntf_writingDirectionFromString(QStringLiteral("vertical-lr"));
         // A failed lookup or a broken firmware parser must not make every
@@ -1639,30 +1641,31 @@ static int ntf_init() {
         if (ntf_wd_vrl >= 0 && ntf_wd_vlr >= 0 && ntf_wd_vrl != ntf_wd_vlr) {
             ntf_vertfix_ready = true;
             NTF_DBG("vertical-rl=%d vertical-lr=%d", ntf_wd_vrl, ntf_wd_vlr);
-        } else {
+        } else if (ntf_vertfix()) {
             NTF_LOG("Note: vertical-writing enum values were invalid (%d, %d); the vertical-text fix is sitting out.", ntf_wd_vrl, ntf_wd_vlr);
         }
-    } else {
+    } else if (ntf_vertfix()) {
         NTF_LOG("Note: the vertical-text fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     }
     ntf_hint_marker_state_t marker = ntf_hint_marker_state();
-    if (marker == NTF_HINT_MARKER_PRESENT) {
+    if (ntf_no_hinting() && marker == NTF_HINT_MARKER_PRESENT) {
         NTF_LOG("Note: the glyph-wobble fix is off this boot (it disabled itself earlier for safety); other fixes still run.");
-    } else if (marker == NTF_HINT_MARKER_UNSAFE) {
+    } else if (ntf_no_hinting() && marker == NTF_HINT_MARKER_UNSAFE) {
         // Do not let an unreadable marker turn a previous safety trip back on.
         __atomic_store_n(&ntf_hint_disabled, true, __ATOMIC_RELAXED);
         NTF_LOG("Note: the glyph-wobble fix is off this boot because its safety state could not be verified; other fixes still run.");
     }
 
-    // FIX 3-5: pattern-scan + patch the loaded libs in memory. Avoid
-    // force-loading the targets when every optional patch is disabled.
-    bool patches_enabled = ntf_global_config_bool("ntf_justify_kospan", true)
-        || ntf_global_config_bool("ntf_justify_punct", true)
-        || ntf_global_config_bool("ntf_letterspace_spaces", true);
+    // FIX 3-5: pattern-scan + patch the loaded libs in memory. Avoid force-loading the targets
+    // when every optional byte patch is disabled.
+    bool patches_enabled = false;
+    for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++)
+        if (ntf_global_config_bool(NTF_JUSTIFY_FIXES[i].cfg_key, NTF_JUSTIFY_FIXES[i].cfg_default))
+            patches_enabled = true;
     if (patches_enabled) {
         ntf_forceload();
         for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
-            if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i])) {
+            if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i], &ntf_patch_active[i])) {
                 // NickelHook's rename-back worker is not created until
                 // ntf_init returns. Reboot instead of returning an error so
                 // the .failsafe name remains in place for the next boot;
@@ -1680,6 +1683,7 @@ static int ntf_init() {
             }
         }
     }
+    ntf_log_fix_statuses(marker);
     return 0;
 }
 
@@ -2505,6 +2509,61 @@ void _ntf_cwv_setWritingDirection(void *self, int dir) {
 // true family, so the fix is simply to quote the family in the injected rule. Applied to the same
 // addCssToHtml `css` copy the other CSS fixes use, before the real call.
 static bool ntf_quote_fontfamily() { return ntf_global_config_bool("ntf_quote_fontfamily", true); }
+
+static bool ntf_reader_font_ready() {
+    return real_kepubReaderCtor && real_kepubReaderDtor && real_wv_addCssToHtml
+        && real_wv_setCurrentPage && ntf_pageStyleCss && ntf_kbr_addCssToHtml;
+}
+static bool ntf_page_inspection_ready() {
+    return real_kbrb_loadFinished && ntf_wv_evaluateJavaScript && real_kepubReaderCtor
+        && real_kepubReaderDtor && real_wv_addCssToHtml;
+}
+
+// Optional NickelHook targets let one fix sit out without disabling the mod. Turn each missing
+// target into a plain-language startup note when that fix is enabled. The full pointer map remains
+// available under ntf_log:1.
+static void ntf_log_unavailable_fixes() {
+    if (ntf_no_hinting() && !real_FT_Load_Glyph)
+        NTF_LOG("Note: the glyph-wobble fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_kepub_fontfix() && !ntf_reader_font_ready())
+        NTF_LOG("Note: the reader-font fallback fix could not attach completely on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_cpsp_fix() && !real_addApplicationFont)
+        NTF_LOG("Note: the capital-spacing fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_quote_fontfamily() && !real_wv_addCssToHtml)
+        NTF_LOG("Note: the reader-font quoting fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_pagecut_trim() && (!real_wv_locatePages || !real_wv_sortRects))
+        NTF_LOG("Note: the page-boundary clipping fix could not attach completely on this firmware, so it is sitting out (other fixes are unaffected).");
+    if ((ntf_center_images() || ntf_dropcap_fix()) && !ntf_page_inspection_ready())
+        NTF_LOG("Note: the page-inspection fixes could not attach completely on this firmware, so they are sitting out (other fixes are unaffected).");
+}
+
+static void ntf_log_fix_row(const char *name, bool configured, bool attached) {
+    bool enabled = ntf_enabled() && configured;
+    NTF_LOG_PLAIN("%s: enabled=%s, active=%s", name, enabled ? "yes" : "no",
+        enabled && attached ? "yes" : "no");
+}
+
+static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker) {
+    char firmware[64];
+    ntf_get_firmware_version(firmware, sizeof(firmware));
+    NTF_LOG_PLAIN("Firmware: %s", firmware);
+    ntf_log_fix_row("Glyph wobble", ntf_no_hinting(),
+        real_FT_Load_Glyph && marker == NTF_HINT_MARKER_ABSENT);
+    ntf_log_fix_row("Vertical text", ntf_vertfix(), ntf_vertfix_ready);
+    ntf_log_fix_row("Justify koboSpan", ntf_global_config_bool("ntf_justify_kospan", true),
+        ntf_patch_active[0]);
+    ntf_log_fix_row("Justify punctuation", ntf_global_config_bool("ntf_justify_punct", true),
+        ntf_patch_active[1]);
+    ntf_log_fix_row("Letter-spacing spaces", ntf_global_config_bool("ntf_letterspace_spaces", true),
+        ntf_patch_active[2]);
+    ntf_log_fix_row("Reader-font fallback", ntf_kepub_fontfix(), ntf_reader_font_ready());
+    ntf_log_fix_row("Capital spacing", ntf_cpsp_fix(), real_addApplicationFont);
+    ntf_log_fix_row("Reader-font quoting", ntf_quote_fontfamily(), real_wv_addCssToHtml);
+    ntf_log_fix_row("Page-boundary clipping", ntf_pagecut_trim(),
+        real_wv_locatePages && real_wv_sortRects);
+    ntf_log_fix_row("Centered images", ntf_center_images(), ntf_page_inspection_ready());
+    ntf_log_fix_row("Drop caps", ntf_dropcap_fix(), ntf_page_inspection_ready());
+}
 
 // True if `value` is a bare CSS generic family keyword. A generic must NOT be quoted: quoting turns it
 // into a (non-existent) family-name lookup, which would break it. Case-insensitive; the -webkit- prefix

@@ -69,5 +69,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  243
-sha256 63b22e7cdd4134ee5c05ba387281494365b927f97ea6baedbb571b113a7dd523
+count  246
+sha256 4cfc17684a49817333632729ff8ebd2e6368f165783fb6d9b8b9b26046d81f18
