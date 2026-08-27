@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- **The letter-spacing fix still applies when both justification fixes are disabled.** Its byte patch shared the justification setup path, which previously skipped all three patches when `ntf_justify_kospan` and `ntf_justify_punct` were both off, even if `ntf_letterspace_spaces` remained on.
 - **The reader-font fallback fix works again** (`ntf_kepub_fontfix`, Fix 6). It has not been engaging since v0.5: a safety check added there was meant to make sure only the reader's own view can trigger the re-apply, but it looked for that view at the wrong place inside the reader object, so the check never passed and the fix silently did nothing — a chapter that first drew in the system (fallback) font stayed that way until you changed a setting or reopened the book. The check now finds the view where it really is (and still refuses to act when it can't prove it), so the re-apply fires again: a chapter that would come up in the wrong font is corrected as it is shown, at the latest on your first page turn in it. If you had this fix enabled on v0.5, v0.6, or v0.7, it was doing nothing; from this version it works as described again.
 - **A failed startup now removes every hook it installed.** Rollback looked hooks up in `libnickel` only, so hooks placed in the Qt and WebKit libraries stayed active after the mod had stopped. It now uses the library each hook was installed in. Comes from a NickelHook update.
 

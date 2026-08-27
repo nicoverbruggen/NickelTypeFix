@@ -1654,11 +1654,12 @@ static int ntf_init() {
         NTF_LOG("Note: the glyph-wobble fix is off this boot because its safety state could not be verified; other fixes still run.");
     }
 
-    // FIX 3+4 (justify): pattern-scan + patch the loaded libs in memory. Avoid
-    // force-loading the targets when both optional patches are disabled.
-    bool justify_enabled = ntf_global_config_bool("ntf_justify_kospan", true)
-        || ntf_global_config_bool("ntf_justify_punct", true);
-    if (justify_enabled) {
+    // FIX 3-5: pattern-scan + patch the loaded libs in memory. Avoid
+    // force-loading the targets when every optional patch is disabled.
+    bool patches_enabled = ntf_global_config_bool("ntf_justify_kospan", true)
+        || ntf_global_config_bool("ntf_justify_punct", true)
+        || ntf_global_config_bool("ntf_letterspace_spaces", true);
+    if (patches_enabled) {
         ntf_forceload();
         for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
             if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i])) {
