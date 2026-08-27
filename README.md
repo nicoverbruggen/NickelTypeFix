@@ -193,7 +193,7 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 
 You don't need to build this yourself. You can just download [the latest release](https://github.com/nicoverbruggen/NickelTypeFix/releases/latest). But if you want to, here are the instructions.
 
-To build the mod, you will need to use Docker or Podman, and build with the `NickelTC`. For convenience, I've included a build script:
+To build the mod, you need Docker or Podman. The build script uses the [NickelBench](https://github.com/nicoverbruggen/nickelbench) image, which includes NickelTC and the firmware compatibility checker:
 
 ```sh
 git submodule update --init

@@ -22,6 +22,6 @@
 ## Checklist
 
 - [ ] `CHANGELOG.md` has an entry under the heading for the version this will ship in (required for user-visible changes).
-- [ ] New/changed libnickel symbols carry a `//libnickel <first> <last|*> <symbol>` annotation.
+- [ ] New or changed hooks and lookups carry a `//nb <kind> <role|*> <first> <last|*> <symbol>...` annotation.
 - [ ] All hooks/dlsyms remain `.optional = true` and are null-checked at the use site.
 - [ ] `./build.sh` succeeds.

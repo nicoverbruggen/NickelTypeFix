@@ -1,7 +1,7 @@
 # Anchor check
 
 Validates NickelTypeFix's in-memory byte-patch anchors against real Kobo firmware, the
-byte-patch analog of a `//libnickel` symbol check.
+byte-patch analog of a NickelBench hook or lookup check.
 
 For each byte-patch fix (the two justification fixes and the letter-spacing fix) it
 confirms, in the firmware's own `libQtGui`/`libQtWebKit`, that every anchor is
@@ -30,8 +30,8 @@ number at the highest device channel. Libs download straight from Kobo's CDN
 once both Qt libs are out, so a firmware costs ~40MB rather than the full ~160MB zip. The two
 libs are cached under `corpus/` (gitignored).
 
-CI (`.github/workflows/anchors.yml`) runs this on pushes to `main` with `corpus/` cached, so a
-push shows green (or red) before you tag a release.
+The `anchors` job in `.github/workflows/checks.yml` runs this with `corpus/` cached, so a push
+shows green or red before you tag a release.
 
 ## Refreshing the firmware list
 

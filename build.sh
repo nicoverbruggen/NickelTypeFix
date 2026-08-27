@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image="${NICKELTC_IMAGE:-ghcr.io/pgaskin/nickeltc:1.0}"
+image="${NICKELTC_IMAGE:-ghcr.io/nicoverbruggen/nickelbench:recent}"
 workdir="${PWD}"
 scratch="${workdir}/tmp/build"
 dev_build="${NTF_DEV_BUILD:-0}"
@@ -60,10 +60,8 @@ tar \
         mkdir -p /work
         tar -C /work -xzf -
         cd /work
-        # NickelHook only recognises the toolchain by the bare prefix, so an
-        # absolute CROSS_COMPILE made it warn that this is not NickelTC when it
-        # is. The image does not put the toolchain on PATH, so put it there and
-        # pass the prefix NickelHook expects.
+        # NickelHook only recognises the toolchain by the bare prefix. Keep its
+        # directory on PATH inside the login shell and pass the expected prefix.
         PATH="/tc/arm-nickel-linux-gnueabihf/bin:$PATH"
         export PATH
         make "$@" \

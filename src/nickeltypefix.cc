@@ -2300,77 +2300,86 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN19KepubBookReaderBase12loadFinishedEb", .sym_new = "_ntf_kbrb_loadFinished",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_loadFinished),
       .desc = "fix 10/11: correct page before pagination", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase12loadFinishedEb
     // FIX 1 — now OPTIONAL so a missing FT symbol only sits out hinting (independence).
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
       .out = nh_symoutptr(real_FT_Load_Glyph), .desc = "load glyphs unhinted", .optional = true },
+    //nb hook libkobo 4.23.15505 * FT_Load_Glyph
     // FIX 2 — optional.
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
-    //libnickel 4.21.15015 * _ZN13CustomWebView19setWritingDirectionE16WritingDirection
+    //nb hook libnickel 4.21.15015 * _ZN13CustomWebView19setWritingDirectionE16WritingDirection
     // FIX 6 — reader-font fallback repair: the ctor resets per-book state; arm on the per-chapter
     // font-CSS injection, re-inject on the next page-set. All optional (a missing symbol just sits
     // the fix out).
     { .sym = "_ZN15KepubBookReaderC1EP11PluginStateP7QWidget", .sym_new = "_ntf_kepubReaderCtor",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderCtor), .desc = "fix 6: reset per-book state", .optional = true },
-    //libnickel 4.21.15015 * _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
+    //nb hook libnickel 4.21.15015 * _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
     { .sym = "_ZN15KepubBookReaderD1Ev", .sym_new = "_ntf_kepubReaderDtor",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kepubReaderDtor), .desc = "fix 6: clear destroyed reader state", .optional = true },
-    //libnickel 4.21.15015 * _ZN15KepubBookReaderD1Ev
+    //nb hook libnickel 4.21.15015 * _ZN15KepubBookReaderD1Ev
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView12addCssToHtmlE7QString
+    //nb hook libnickel 4.21.15015 * _ZN10WebkitView12addCssToHtmlE7QString
     { .sym = "_ZN10WebkitView14setCurrentPageEi", .sym_new = "_ntf_wv_setCurrentPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_setCurrentPage), .desc = "re-apply reader font per chapter", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView14setCurrentPageEi
+    //nb hook libnickel 4.21.15015 * _ZN10WebkitView14setCurrentPageEi
     // (letter-spacing on spaces is an in-memory byte patch, not a hook — see NTF_JUSTIFY_FIXES.)
     // FIX 7 — capital spacing: strip cpsp from each reader font as it's registered. Optional; a
     // missing symbol just sits the fix out. QFontDatabase::addApplicationFont is a Qt import in
-    // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo. It carries no symbol
-    // annotation on purpose: the symbol is imported, not defined here, so it has no offset in
-    // libnickel, and test/syms (which resolves symbols to offsets) would report it missing on
-    // every firmware.
+    // libnickel's PLT, hooked the same way as FT_Load_Glyph in libkobo. The compatibility annotation
+    // checks that import directly rather than looking for a definition in libnickel.
     { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN13QFontDatabase18addApplicationFontERK7QString
     // FIX 9 — page-boundary clipping. Both optional; a missing symbol sits the fix out.
     // locatePages brackets each pagination pass, which is the only place the reader's own view can
     // be identified; sortRectsByStart is a static function (no `this`) carrying the line rects the
     // page walk is about to read, and is where the trim runs.
     { .sym = "_ZN10WebkitView11locatePagesEb", .sym_new = "_ntf_wv_locatePages",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_locatePages), .desc = "fix 9: bracket a pagination pass", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView11locatePagesEb
+    //nb hook libnickel 4.21.15015 * _ZN10WebkitView11locatePagesEb
     { .sym = "_ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection", .sym_new = "_ntf_wv_sortRects",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_sortRects), .desc = "fix 9: trim the pass's line rects", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
+    //nb hook libnickel 4.21.15015 * _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
 #if NTF_DEV_BUILD
     // FIX 9 development probe: two extra strict-passthrough seams.
     { .sym = "_ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection", .sym_new = "_ntf_wv_cutPage",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_cutPage), .desc = "fix 9 probe: observe straddle page cuts", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection
+    //nb hook libnickel 4.21.15015 * _ZN10WebkitView7cutPageERK7QVectorI5QRectEii16WritingDirection
     { .sym = "_ZN19KepubBookReaderBase11locatePagesEb", .sym_new = "_ntf_kbrb_locatePages",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_locatePages), .desc = "fix 9 probe: mark annotation-path passes", .optional = true },
-    //libnickel 4.21.15015 * _ZN19KepubBookReaderBase11locatePagesEb
+    //nb hook libnickel 4.21.15015 * _ZN19KepubBookReaderBase11locatePagesEb
 #endif
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
     { .name = "_Z26writingDirectionFromStringRK7QString", .out = nh_symoutptr(ntf_writingDirectionFromString), .desc = "derive vertical enum ints", .optional = true },
+    //nb lookup * 4.23.15505 * _Z26writingDirectionFromStringRK7QString
     { .name = "_ZNK13CustomWebView8settingsEv", .out = nh_symoutptr(ntf_cwv_settings), .desc = "reach the page's QWebSettings", .optional = true },
+    //nb lookup * 4.23.15505 * _ZNK13CustomWebView8settingsEv
     { .name = "_ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl", .out = nh_symoutptr(ntf_setUserStyleSheetUrl), .desc = "set/clear the user stylesheet", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
     { .name = "_ZNK12QWebSettings17userStyleSheetUrlEv", .out = nh_symoutptr(ntf_getUserStyleSheetUrl), .desc = "read the slot back before touching it", .optional = true },
+    //nb lookup * 4.23.15505 * _ZNK12QWebSettings17userStyleSheetUrlEv
     { .name = "_ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString", .out = nh_symoutptr(ntf_wv_evaluateJavaScript), .desc = "fix 10/11: inspect the laid-out page", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
     { .name = "_ZNK10WebkitView7webViewEv", .out = nh_symoutptr(ntf_wv_webView), .desc = "map a WebkitView to its CustomWebView", .optional = true },
+    //nb lookup * 4.23.15505 * _ZNK10WebkitView7webViewEv
     { .name = "_ZN15KepubBookReader12pageStyleCssEb", .out = nh_symoutptr(ntf_pageStyleCss), .desc = "fix 6: rebuild reader-font CSS", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN15KepubBookReader12pageStyleCssEb
     { .name = "_ZN15KepubBookReader12addCssToHtmlE7QString", .out = nh_symoutptr(ntf_kbr_addCssToHtml), .desc = "fix 6: re-inject reader-font CSS", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN15KepubBookReader12addCssToHtmlE7QString
     // NOTE: an earlier revision resolved `_ZThn24_N15KepubBookReaderD1Ev` here and treated its
     // existence as proof that WebkitView is the +24 subobject. That thunk belongs to a different
     // base at +24; the view offset is learned per book instead (ntf_learn_reader_view).
 #if NTF_DEV_BUILD
     { .name = "_ZN10WebkitView8fontSizeEv", .out = nh_symoutptr(ntf_wv_fontSize), .desc = "fix 9 probe: log the reading font size per pass", .optional = true },
-    //libnickel 4.21.15015 * _ZN10WebkitView8fontSizeEv
+    //nb lookup * 4.21.15015 * _ZN10WebkitView8fontSizeEv
     { .name = "_ZNK10WebkitView10totalPagesEv", .out = nh_symoutptr(ntf_wv_totalPages), .desc = "fix 9 probe: log each pass's resulting page count", .optional = true },
-    //libnickel 4.21.15015 * _ZNK10WebkitView10totalPagesEv
+    //nb lookup * 4.21.15015 * _ZNK10WebkitView10totalPagesEv
     { .name = "_ZNK10WebkitView13getPageOffsetEiRiS0_", .out = nh_symoutptr(ntf_wv_getPageOffset), .desc = "fix 9 probe: read back each placed page boundary", .optional = true },
-    //libnickel 4.25.15875 * _ZNK10WebkitView13getPageOffsetEiRiS0_
+    //nb lookup * 4.25.15875 * _ZNK10WebkitView13getPageOffsetEiRiS0_
 #endif
     {0},
 };

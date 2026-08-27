@@ -1,5 +1,5 @@
 // Command anchors validates NickelTypeFix's in-memory byte-patch anchors against
-// real Kobo firmware, the way test/syms validates //libnickel symbols.
+// real Kobo firmware, while NickelBench validates hooks and symbol lookups.
 //
 // For each byte-patch fix it confirms, in the firmware's own libQtGui/libQtWebKit,
 // that every anchor is PRESENT and UNIQUE and that the expected original bytes sit

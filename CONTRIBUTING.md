@@ -9,10 +9,10 @@ Needs [podman](https://podman.io) (or Docker); the ARM cross-toolchain runs in a
 ```sh
 git clone --recursive https://github.com/nicoverbruggen/NickelTypeFix   # --recursive: NickelHook is a submodule
 cd NickelTypeFix
-./build.sh                                                             # make clean all strip koboroot in ghcr.io/pgaskin/nickeltc:1.0
+./build.sh                                                             # make clean all strip koboroot in the NickelBench image
 ```
 
-This produces `KoboRoot.tgz` at the repo root. `./build.sh <targets>` passes other make targets through; `NICKELTC_IMAGE` overrides the toolchain image. You can also build straight on the host with `make CROSS_COMPILE=/path/to/nickeltc/bin/arm-nickel-linux-gnueabihf- all koboroot`.
+This produces `KoboRoot.tgz` at the repo root. `./build.sh <targets>` passes other make targets through; `NICKELTC_IMAGE` overrides the container image. You can also build straight on the host with `make CROSS_COMPILE=/path/to/nickeltc/bin/arm-nickel-linux-gnueabihf- all koboroot`.
 
 Version stamping: NickelHook.mk bakes `git describe --tags --always --dirty` into `NH_VERSION`: the git tag when you're on one, otherwise a commit hash. `build.sh` keeps `.git` out of what it sends the container, so it reads the version on the host and passes it to make. A local build is stamped like a CI one, with `-dirty` when the tree has uncommitted changes. Outside a checkout there is no version and the logger falls back to `dev`. CI (checkout with `fetch-depth: 0`) produces the authoritative artifacts.
 
@@ -34,9 +34,9 @@ The mod logs to `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log` (and to 
 
 ## Firmware compatibility
 
-The mod attaches in more than one place, so there are two checkers:
+The mod attaches in more than one place, so there are two compatibility checks:
 
-- **Symbols.** Each hooked `libnickel` symbol carries a `//libnickel <first> <last|*> <symbol>` annotation. The `test/syms` checker (CI job `syms`, runnable locally with Go: `cd test/syms && go build -o ../../test.syms . && cd ../src && ../test.syms`) verifies them against real firmware dumps. `QFontDatabase::addApplicationFont` is deliberately unannotated: it is a Qt symbol imported into libnickel's PLT, so it has no offset there and the checker would report it missing on every firmware.
+- **Hooks and lookups.** Each target carries a `//nb <kind> <role|*> <first> <last|*> <symbol>...` annotation. `nickelbench check-source src` verifies every annotation against the recent Kobo 4.x compatibility database bundled in the build image. Hook checks require the expected PLT relocation in the named library. Lookup checks require an exported definition in one of the recorded process libraries. CI runs this after building the mod.
 - **Byte patches.** The justification and letter-spacing fixes edit instructions in memory. `test/anchors` (CI job `anchors`) confirms, against real firmware, that every anchor is present and unique and that the expected original bytes sit at each edit offset. A firmware that lacks the pattern is reported as "sits out" and does not fail; an ambiguous match or differing original bytes is a hard failure.
 
 The floor is firmware 4.23.15505. Every hook and lookup is `.optional`, so a missing symbol sits one fix out rather than failing the mod. Targets Kobo 4.x only; 5.x (Qt 6 / Chromium) is out of scope and the mod stays inert there.
@@ -44,7 +44,7 @@ The floor is firmware 4.23.15505. Every hook and lookup is `.optional`, so a mis
 ## Pull requests
 
 - Add an entry to `CHANGELOG.md` under the heading for the version it will ship in, for any user-visible change (release notes are generated from it).
-- Annotate any new `libnickel` symbol with `//libnickel …`; CI verifies it.
+- Annotate each new or changed hook and lookup with `//nb …`; CI verifies it.
 - If you touch a byte patch, update the anchor table so `test/anchors` covers it.
 - State the device + firmware you tested on, and attach the relevant `nickel-type-fix.log` excerpt (the PR template asks for both).
 
