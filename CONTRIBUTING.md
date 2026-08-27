@@ -39,7 +39,7 @@ The mod attaches in more than one place, so there are two checkers:
 - **Symbols.** Each hooked `libnickel` symbol carries a `//libnickel <first> <last|*> <symbol>` annotation. The `test/syms` checker (CI job `syms`, runnable locally with Go: `cd test/syms && go build -o ../../test.syms . && cd ../src && ../test.syms`) verifies them against real firmware dumps. `QFontDatabase::addApplicationFont` is deliberately unannotated: it is a Qt symbol imported into libnickel's PLT, so it has no offset there and the checker would report it missing on every firmware.
 - **Byte patches.** The justification and letter-spacing fixes edit instructions in memory. `test/anchors` (CI job `anchors`) confirms, against real firmware, that every anchor is present and unique and that the expected original bytes sit at each edit offset. A firmware that lacks the pattern is reported as "sits out" and does not fail; an ambiguous match or differing original bytes is a hard failure.
 
-The floor is firmware 4.21. Every hook and lookup is `.optional`, so a missing symbol sits one fix out rather than failing the mod. Targets Kobo 4.x only; 5.x (Qt 6 / Chromium) is out of scope and the mod stays inert there.
+The floor is firmware 4.23.15505. Every hook and lookup is `.optional`, so a missing symbol sits one fix out rather than failing the mod. Targets Kobo 4.x only; 5.x (Qt 6 / Chromium) is out of scope and the mod stays inert there.
 
 ## Pull requests
 

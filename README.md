@@ -145,7 +145,7 @@ Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can'
 
 ## Compatibility
 
-Requires Kobo **software version 4.21+**. 
+Requires Kobo **software version 4.23.15505+**.
 
 **This mod <u>does not work on 5.x</u>, which is currently available in Europe as an accessibility preview at the time of writing.**
 

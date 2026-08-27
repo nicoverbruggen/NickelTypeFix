@@ -179,7 +179,7 @@ func main() {
 	src := flag.String("src", "", "path to nickeltypefix.cc (default: locate ../../src/nickeltypefix.cc)")
 	corpus := flag.String("corpus", "corpus", "dir to cache extracted firmware libs")
 	list := flag.String("list", "firmwares.tsv", "firmware list (version<tab>url<tab>md5)")
-	floor := flag.String("floor", "4.21", "minimum firmware version to check (the mod's support floor)")
+	floor := flag.String("floor", "4.23.15505", "minimum firmware version to check (the mod's support floor)")
 	only := flag.String("only", "", "comma-separated versions to check (default: all in -list at/above -floor)")
 	offline := flag.Bool("offline", false, "use only cached libs under -corpus; never download")
 	flag.Parse()

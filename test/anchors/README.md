@@ -21,7 +21,7 @@ its anchor(s), target library, and edit offsets.
 
     go run .                     # every tracked firmware at the mod floor (downloads to ./corpus, cached)
     go run . -only 4.44.23552    # specific version(s), comma-separated
-    go run . -floor 4.38         # raise the version floor (default 4.21, the mod's minimum)
+    go run . -floor 4.38         # raise the version floor (default 4.23.15505, the mod's minimum)
     go run . -offline            # only what's already cached under ./corpus (no network)
 
 The firmware set is `firmwares.tsv` (version, download URL, zip md5), one entry per version
