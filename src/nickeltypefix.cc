@@ -15,7 +15,7 @@
 //      the complete original boxes with one-page glyph ownership (libnickel)   [ntf_pagecut_trim]
 //      Development builds also log both rect tables and where the walk placed each boundary.
 //  12. Fast text shaping   — switch Qt to HarfBuzz NG and cache shaped runs (libQtGui)  [ntf_fast_shaping]
-//  14. Mid-parse layout    — suppress WebKit's discarded progressive layout during a chapter load,
+//  13. Mid-parse layout    — suppress WebKit's discarded progressive layout during a chapter load,
 //      located by prologue signature in the stripped libQtWebKit   [ntf_skip_parse_layout]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 6–9 use NickelHook PLT hooks;
@@ -180,7 +180,7 @@ ntf_more_spacing:0
 # second. Letters, spacing and line breaks are unchanged. 0 = off.
 ntf_fast_shaping:1
 
-# Fix 14 - skip the layout WebKit throws away: while a long chapter is still being read in, WebKit
+# Fix 13 - skip the layout WebKit throws away: while a long chapter is still being read in, WebKit
 # lays out the part of it that exists so a slow-loading web page can show something. A book chapter
 # comes from the device itself, and the reader does not draw anything until the whole chapter is
 # ready, so that first layout is worked out in full and then discarded. This skips it. Only the
@@ -218,7 +218,7 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
     { "ntf_pagecut_trim",       "1", "Fix 9 - paginate overlapping kepub lines without clipping their glyphs (any font)" },
     { "ntf_fast_shaping",       "1", "Fix 12 - use Qt's newer text shaper and cache shaped runs, so chapters open faster" },
-    { "ntf_skip_parse_layout",  "1", "Fix 14 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
+    { "ntf_skip_parse_layout",  "1", "Fix 13 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
     { "ntf_more_spacing",       "0", "replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
     { NULL, NULL, NULL },
@@ -1635,7 +1635,7 @@ static void ntf_remove_superseded(void) {
 // ================= init =================
 static void ntf_log_unavailable_fixes();
 static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker);
-static void ntf_parse_layout_install(void);   // FIX 14, defined with the rest of the fix
+static void ntf_parse_layout_install(void);   // FIX 13, defined with the rest of the fix
 // FIX 12: the three QTextEngine symbols the fix reads. shapeText is disassembled to find Qt's
 // shaper selector; the two shapers are the detour targets.
 static void *ntf_qte_shapeText;
@@ -1927,9 +1927,9 @@ static int ntf_init() {
             NTF_LOG("Note: the fast-shaping fix switched to the newer shaper but could not install its cache, so chapters open faster but not as fast as they could.");
     }
 
-    // FIX 14: detour FrameView::scheduleRelayout so it can be no-oped inside a chapter load.
+    // FIX 13: detour FrameView::scheduleRelayout so it can be no-oped inside a chapter load.
     // After the byte patches, for the same reason as fix 12: their scans want unmodified code.
-    ntf_crumb("installing mid-parse layout fix (fix 14)");
+    ntf_crumb("installing mid-parse layout fix (fix 13)");
     ntf_parse_layout_install();
 
     ntf_crumb("init finished");
@@ -2816,7 +2816,7 @@ static bool ntf_dropcap_fix();
 static bool ntf_center_images();
 
 
-// ============ FIX 14 — skip WebKit's mid-parse layout ============
+// ============ FIX 13 — skip WebKit's mid-parse layout ============
 // A kepub chapter is laid out TWICE on anything long enough to take more than a quarter second to
 // parse, and the first layout is thrown away.
 //
@@ -2941,7 +2941,7 @@ static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
 
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
-    // FIX 14: the parse is over, so the layout timer goes back to normal before anything below
+    // FIX 13: the parse is over, so the layout timer goes back to normal before anything below
     // changes the page. The parse-end layout is a direct call and has already been allowed through.
     ntf_parse_window_close();
     // Before the real call on purpose: locatePages runs one step inside it, so this is the
@@ -3181,10 +3181,10 @@ static struct nh_hook NickelTypeFixHooks[] = {
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_loadFinished),
       .desc = "fix 10/11: correct page before pagination", .optional = true },
     //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase12loadFinishedEb
-    // FIX 14: open the chapter-load window; loadFinished closes it.
+    // FIX 13: open the chapter-load window; loadFinished closes it.
     { .sym = "_ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover", .sym_new = "_ntf_kbrb_startChapterLoad",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_startChapterLoad),
-      .desc = "fix 14: open the chapter-load window", .optional = true },
+      .desc = "fix 13: open the chapter-load window", .optional = true },
     //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
     // FIX 1 — now OPTIONAL so a missing FT symbol only sits out hinting (independence).
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
@@ -3219,7 +3219,6 @@ static struct nh_hook NickelTypeFixHooks[] = {
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setViewportSize),
       .desc = "record the reader's viewport", .optional = true },
     //nb hook libnickel 4.23.15505 * _ZN13CustomWebView15setViewportSizeE5QSize
-    // FIX 13: hold a rule removal so a byte-identical re-add costs nothing.
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
     //nb hook libnickel 4.21.15015 * _ZN10WebkitView12addCssToHtmlE7QString
@@ -3357,7 +3356,7 @@ void _ntf_kepubReaderDtor(void *self) {
         ntf_chapter_view = nullptr;
         ntf_chapter_needs_fix = false;
         ntf_fontfix_logged = false;
-        ntf_parse_window_close();         // Fix 14: no reader, no load in flight
+        ntf_parse_window_close();         // Fix 13: no reader, no load in flight
 
         ntf_pagecut_trim_armed = false;   // Fix 9: no reader, no pagination pass to correct
         ntf_pagecut_reset_snaps(false);   // Fix 9: do not retain the destroyed reader's frame

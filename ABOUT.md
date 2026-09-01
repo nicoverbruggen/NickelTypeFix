@@ -343,7 +343,7 @@ where the untouched work is a larger share of the total.
 
 **What this does not do.** It does not touch Fix 2's vertical pages, which run on WebKit's simple path and are never shaped. Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.
 
-## Fix 14 — Long chapters laid out twice · `ntf_skip_parse_layout`
+## Fix 13 — Long chapters laid out twice · `ntf_skip_parse_layout`
 
 **The bug.** A kepub chapter that takes more than a quarter second to parse is laid out twice, and the first layout is discarded before anything reaches the screen.
 

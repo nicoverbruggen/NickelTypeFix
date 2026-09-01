@@ -73,7 +73,7 @@ var fixes = []fixDef{
 	{"letter-spacing on spaces", "ntf_letterspace_spaces", []siteDef{
 		{"Gui", "LSP_ANCHOR", []editDef{{6, "LSP_A_ORIG"}, {12, "LSP_B_ORIG"}}},
 	}},
-	// Fix 14 is a detour rather than a byte patch: the anchor IS the prologue that gets
+	// Fix 13 is a detour rather than a byte patch: the anchor IS the prologue that gets
 	// overwritten with a jump, so there are no separate original bytes to compare against.
 	// Present-and-unique is the entire safety condition, and checkSite settles that before it
 	// looks at any edit, so the edit list is empty on purpose.

@@ -1,6 +1,6 @@
 # NickelTypeFix
 
-This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack.
+This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack, and makes books open faster.
 
 Each fix is independent and fail-safe. Individual fixes apply only if they can safely be applied. You can also disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
 
@@ -34,8 +34,15 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | Sometimes lines of text seem to be cut off and spread across two page turns. | Paginates without line-box overlap, then paints each complete line on one page. Works with any font. | **#9** |
 | Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
 | A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
+
+### How fast a book opens
+
+Neither of these changes a single letter, space or line break on the finished page. They only stop the reader doing the same work twice.
+
+| The problem | What the mod does | Fix |
+| --- | --- | --: |
 | A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses the newer of the two text shapers Qt already carries, and remembers text it has already shaped instead of working it out again. Books generally open about twice as fast; letters and line breaks are unchanged. | **#12** |
-| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Skips the layout WebKit does halfway through reading the chapter in, which exists so a slow web page can show something early and is useless for a book already on the device. The finished page is identical. | **#14** |
+| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Skips the layout WebKit does halfway through reading the chapter in, which exists so a slow web page can show something early and is useless for a book already on the device. The finished page is identical. | **#13** |
 
 ### Which font you actually get
 
@@ -141,6 +148,8 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_pagecut_trim` | `1` | Fix #9: keep complete lines on one page when their line boxes overlap a page edge. |
 | `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
+| `ntf_fast_shaping` | `1` | Fix #12: use Qt's newer text shaper and remember text it has already shaped. |
+| `ntf_skip_parse_layout` | `1` | Fix #13: skip the layout WebKit does mid-parse and then discards. |
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
@@ -162,7 +171,7 @@ For example, you can install it on:
 - Older devices, which run the 4.38 branch (at the time of writing)
 - Newer devices, which run the 4.46 branch (at the time of writing)
 
-The in-memory patches anchor to position-independent instruction patterns rather than fixed addresses, and all three are verified present and byte-identical across the 4.38, 4.45 and 4.46 firmware branches.
+Every fix that edits code anchors to a position-independent instruction pattern rather than a fixed address: three in-memory byte patches, and one detour that finds its function by the prologue, because the library it lives in has no symbols. All four are checked against every firmware release from 4.23.15505 to 4.46.23836, where each must be present, unique, and carry the bytes it expects. Anything else and the fix sits out.
 
 ## Safety
 
