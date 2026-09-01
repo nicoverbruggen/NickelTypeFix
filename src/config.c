@@ -14,6 +14,10 @@
 
 bool ntf_log_setup_done = false;
 bool ntf_log_prepend_newline = false;
+char ntf_log_buffer[NTF_LOG_BUFFER_BYTES];
+size_t ntf_log_buffer_used = 0;
+time_t ntf_log_buffer_since = 0;
+pthread_mutex_t ntf_log_buffer_lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct ntf_config_entry_t {
     char *key;

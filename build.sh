@@ -11,6 +11,7 @@ if [ "${dev_build}" != 0 ] && [ "${dev_build}" != 1 ]; then
     exit 2
 fi
 
+
 if command -v podman >/dev/null 2>&1; then
     container_engine="podman"
 elif command -v docker >/dev/null 2>&1; then
