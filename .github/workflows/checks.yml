@@ -27,6 +27,12 @@ jobs:
       - name: Check interface
         run: test/interface/check.sh
 
+      - name: Check page-boundary geometry
+        run: test/pagecut/check.sh
+
+      - name: Check line-spacing values
+        run: test/spacing/check.sh
+
       - name: Check firmware compatibility
         run: nickelbench check-source src
 
