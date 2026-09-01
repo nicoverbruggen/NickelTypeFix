@@ -343,6 +343,27 @@ where the untouched work is a larger share of the total.
 
 **What this does not do.** It does not touch Fix 2's vertical pages, which run on WebKit's simple path and are never shaped. Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.
 
+## Fix 14 — Long chapters laid out twice · `ntf_skip_parse_layout`
+
+**The bug.** A kepub chapter that takes more than a quarter second to parse is laid out twice, and the first layout is discarded before anything reaches the screen.
+
+**The cause.** WebCore's `FrameView` keeps a layout timer. Its threshold, `cLayoutScheduleThreshold`, is 250 ms: once the parse has been running that long, `Document::minimumLayoutDelay()` returns 0 and every later `scheduleRelayout` arms the timer with no delay at all. The timer fires while the parser is still working, lays out the part of the document that exists, and that is WebKit's progressive rendering. It is what lets a slow-loading web page show its first paragraphs before the rest arrives. When the parse then ends, `XMLDocumentParser::end` reconstructs the `StyleResolver`, which invalidates the whole render tree, and the document is laid out again from nothing.
+
+For a browser that is the right trade. For this reader it is pure waste. The chapter is served out of memory by `EpubNetworkAccessManager`, not off a network, so there is no progress to show; and Nickel does not paint until `loadFinished` has run, which device traces confirm — the whole load window recorded **0 paints**. The first layout is shaped and measured in full, then thrown away without ever being seen.
+
+**The fix.** `FrameView::scheduleRelayout` is made a no-op, but only between `KepubBookReaderBase::startChapterLoad` and `loadFinished`. Only the timer is suppressed. Forced layouts still run, including the one at parse end, which is a direct call rather than a timer fire. Outside that window the real function runs untouched, so resizes, settings changes and everything after the load behave exactly as stock.
+
+**Measured** on a Clara BW, one long chapter:
+
+| | shaping calls | load |
+|---|---|---|
+| stock | 58,732 | 5.4–6.0 s |
+| with this fix | 32,422 | 3.9 s |
+
+The page table is identical either side: 4,210 line records, 121 pages. A short chapter finishes parsing before the 250 ms threshold, never arms the timer, and so was only ever laid out once. This fix costs those chapters nothing and gains them nothing.
+
+**Safety.** `libQtWebKit` on the device is stripped, so there is no symbol to resolve. The function is located by a 12-byte prologue signature and the fix sits out unless that matches exactly once inside the library. The signature was confirmed unique in five rootfs images spanning firmware 4.38.23697 and 4.45.23697 on Clara BW and Libra 2, all carrying a byte-identical `libQtWebKit`. The window is closed three ways — at `loadFinished`, at the reader's destructor, and by a 30-second wall-clock bound — so a load that never finishes cannot leave the layout timer suppressed for the rest of the session.
+
 ## Optional 24-value line-spacing slider · `ntf_more_spacing`
 
 Kobo normally gives the line-spacing slider 15 choices, running from `1.00` to `3.00`. This option replaces them with 24 closer ones, with finer control at the lower end: `0.80`, `0.81`, `0.82`, `0.83`, `0.84`, `0.86`, `0.88`, `0.90`, `0.92`, `0.94`, `0.96`, `0.98`, `1.00`, `1.02`, `1.05`, `1.07`, `1.10`, `1.15`, `1.20`, `1.25`, `1.30`, `1.35`, `1.40`, and `1.50`.

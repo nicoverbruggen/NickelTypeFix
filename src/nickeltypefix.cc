@@ -15,6 +15,8 @@
 //      the complete original boxes with one-page glyph ownership (libnickel)   [ntf_pagecut_trim]
 //      Development builds also log both rect tables and where the walk placed each boundary.
 //  12. Fast text shaping   — switch Qt to HarfBuzz NG and cache shaped runs (libQtGui)  [ntf_fast_shaping]
+//  14. Mid-parse layout    — suppress WebKit's discarded progressive layout during a chapter load,
+//      located by prologue signature in the stripped libQtWebKit   [ntf_skip_parse_layout]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 6–9 use NickelHook PLT hooks;
 // fixes 3–5 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -178,6 +180,13 @@ ntf_more_spacing:0
 # second. Letters, spacing and line breaks are unchanged. 0 = off.
 ntf_fast_shaping:1
 
+# Fix 14 - skip the layout WebKit throws away: while a long chapter is still being read in, WebKit
+# lays out the part of it that exists so a slow-loading web page can show something. A book chapter
+# comes from the device itself, and the reader does not draw anything until the whole chapter is
+# ready, so that first layout is worked out in full and then discarded. This skips it. Only the
+# chapters long enough to trigger it are affected; short ones never did it and are unchanged. The
+# finished page is identical either way. 0 = off.
+ntf_skip_parse_layout:1
 
 
 
@@ -209,6 +218,7 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
     { "ntf_pagecut_trim",       "1", "Fix 9 - paginate overlapping kepub lines without clipping their glyphs (any font)" },
     { "ntf_fast_shaping",       "1", "Fix 12 - use Qt's newer text shaper and cache shaped runs, so chapters open faster" },
+    { "ntf_skip_parse_layout",  "1", "Fix 14 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
     { "ntf_more_spacing",       "0", "replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
     { NULL, NULL, NULL },
@@ -1625,6 +1635,7 @@ static void ntf_remove_superseded(void) {
 // ================= init =================
 static void ntf_log_unavailable_fixes();
 static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker);
+static void ntf_parse_layout_install(void);   // FIX 14, defined with the rest of the fix
 // FIX 12: the three QTextEngine symbols the fix reads. shapeText is disassembled to find Qt's
 // shaper selector; the two shapers are the detour targets.
 static void *ntf_qte_shapeText;
@@ -1915,6 +1926,11 @@ static int ntf_init() {
         else if (!ntf_shape_status.cache_installed)
             NTF_LOG("Note: the fast-shaping fix switched to the newer shaper but could not install its cache, so chapters open faster but not as fast as they could.");
     }
+
+    // FIX 14: detour FrameView::scheduleRelayout so it can be no-oped inside a chapter load.
+    // After the byte patches, for the same reason as fix 12: their scans want unmodified code.
+    ntf_crumb("installing mid-parse layout fix (fix 14)");
+    ntf_parse_layout_install();
 
     ntf_crumb("init finished");
     ntf_crumb_clear_later();
@@ -2799,11 +2815,135 @@ static void ntf_run_page_script(void *view, bool images, bool dropcap, bool prob
 static bool ntf_dropcap_fix();
 static bool ntf_center_images();
 
+
+// ============ FIX 14 — skip WebKit's mid-parse layout ============
+// A kepub chapter is laid out TWICE on anything long enough to take more than a quarter second to
+// parse, and the first layout is thrown away.
+//
+// WebCore's FrameView keeps a layout timer. cLayoutScheduleThreshold is 250 ms: once the parse has
+// been running that long, Document::minimumLayoutDelay() returns 0 and every subsequent
+// scheduleRelayout arms the timer with no delay. The timer fires mid-parse, lays out the partial
+// document, and that is WebKit's progressive rendering — the thing that lets a page on a slow
+// network show text before the rest arrives. When the parse then ends, XMLDocumentParser::end
+// reconstructs the StyleResolver, which invalidates the whole render tree, and the document is laid
+// out again from scratch.
+//
+// Nothing here benefits from the first pass. The chapter is served out of memory by
+// EpubNetworkAccessManager, not off a network, and Nickel does not paint until loadFinished has
+// run: device traces of the whole load window recorded 0 paints. So the first layout is shaped,
+// measured, and discarded without ever reaching the screen. Measured on a Clara BW, suppressing it
+// took a long chapter from 58,732 shaping calls to 32,422 and 5.4-6.0 s to 3.9 s, with the page
+// table identical either side (4,210 line records, 121 pages).
+//
+// Short chapters never arm the timer, so they are unaffected. This fix costs them nothing and gains
+// them nothing.
+//
+// HOW. FrameView::scheduleRelayout is detoured and made a no-op, but only inside a chapter load.
+// Only the TIMER is suppressed; forced layouts still run, including the one at parse end, which is
+// a direct call rather than a timer fire. Outside the window the real function runs untouched, so
+// resizes, settings changes and everything after the load behave exactly as stock.
+//
+// SAFETY. libQtWebKit on the device is stripped, so the function is located by a 12-byte prologue
+// signature and the fix sits out unless that matches exactly once. The signature was confirmed
+// unique in five rootfs images spanning firmware 4.38.23697 and 4.45.23697 on Clara BW and Libra 2,
+// all byte-identical libraries. The window is opened at KepubBookReaderBase::startChapterLoad and
+// closed at loadFinished, at the reader's destructor, and by a wall-clock bound, so a load that
+// never finishes cannot leave layout suppressed for the rest of the boot.
+static const unsigned char RLY_ANCHOR[] = {
+    0xf8,0xb5, 0x04,0x46, 0xd0,0xf8,0x24,0x01, 0x00,0xaf, 0x3d,0x4d,
+};
+// How long the window may stay open before it stops suppressing anything. A chapter load is a few
+// seconds; this only has to be longer than the slowest real one and short enough that a load which
+// silently never finishes cannot cost the reader its layout timer for the rest of the session.
+#define NTF_PARSE_WINDOW_MAX_MS 30000
+
+typedef void *(*ntf_relayout_fn)(void *, void *, void *, void *);
+static ntf_relayout_fn real_wk_scheduleRelayout = nullptr;
+static bool ntf_parse_layout_ready = false;    // the detour is installed
+static bool ntf_in_chapter_load = false;       // the window is open
+static long ntf_chapter_load_ms = 0;           // when it opened, for the wall-clock bound
+static unsigned long ntf_relayout_skipped = 0, ntf_relayout_passed = 0;
+
+static bool ntf_skip_parse_layout() { return ntf_global_config_bool("ntf_skip_parse_layout", true); }
+
+static long ntf_monotonic_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+// True while a chapter load is in flight and the fix is allowed to act on it.
+static bool ntf_parse_window_open(void) {
+    if (!ntf_in_chapter_load) return false;
+    if (ntf_monotonic_ms() - ntf_chapter_load_ms > NTF_PARSE_WINDOW_MAX_MS) return false;
+    return true;
+}
+
+static void ntf_parse_window_close(void) {
+    if (!ntf_in_chapter_load) return;
+    ntf_in_chapter_load = false;
+    NTF_DBG("Mid-parse layout: %lu timer arming(s) skipped, %lu passed through.",
+        ntf_relayout_skipped, ntf_relayout_passed);
+}
+
+// Kept deliberately short: WebCore calls this on every style change, so it runs thousands of times
+// in a load. The config is settled at install time rather than looked up here.
+extern "C" __attribute__((visibility("default")))
+void *_ntf_wk_scheduleRelayout(void *a0, void *a1, void *a2, void *a3) {
+    if (!real_wk_scheduleRelayout) return nullptr;
+    if (ntf_parse_window_open()) {
+        ntf_relayout_skipped++;
+        return nullptr;   // the timer is never armed; forced layouts are untouched
+    }
+    ntf_relayout_passed++;
+    return real_wk_scheduleRelayout(a0, a1, a2, a3);
+}
+
+// Locate scheduleRelayout by prologue signature and detour it. Called once from ntf_init. The
+// detour is only installed when the fix is on, so nothing is left in the path when it is off.
+static void ntf_parse_layout_install(void) {
+    if (!ntf_enabled() || !ntf_skip_parse_layout()) { NTF_DBG("Mid-parse layout fix is turned off in config; skipping."); return; }
+    struct ntf_find f = { "WebKit", "Widgets", RLY_ANCHOR, (int)sizeof(RLY_ANCHOR), 0, NULL, NULL, 0, 0 };
+    dl_iterate_phdr(ntf_find_cb, &f);
+    if (f.total != 1) {
+        NTF_DBG("Mid-parse layout: scheduleRelayout matched %d time(s), not 1.", f.total);
+        return;
+    }
+    void *orig = nullptr;
+    int rc = ntf_detour_at((void *)f.match, (void *)&_ntf_wk_scheduleRelayout, &orig, nullptr);
+    if (rc != 0 || !orig) {
+        NTF_DBG("Mid-parse layout: detour refused at %p (%d).", (const void *)f.match, rc);
+        return;
+    }
+    real_wk_scheduleRelayout = (ntf_relayout_fn)orig;
+    ntf_parse_layout_ready = true;
+    NTF_DBG("Mid-parse layout: scheduleRelayout detoured at %p.", (const void *)f.match);
+}
+
+// Open the window. Four void* arguments rather than the real two: the extra pair is read from and
+// written back to r2/r3 untouched, which costs nothing and keeps the shim register-preserving.
+static void *(*real_kbrb_startChapterLoad)(void *, void *, void *, void *) = nullptr;
+
+extern "C" __attribute__((visibility("default")))
+void *_ntf_kbrb_startChapterLoad(void *a0, void *a1, void *a2, void *a3) {
+    if (ntf_parse_layout_ready && ntf_on_qt_thread()) {
+        ntf_in_chapter_load = true;
+        ntf_chapter_load_ms = ntf_monotonic_ms();
+        ntf_relayout_skipped = 0;
+        ntf_relayout_passed = 0;
+    }
+    if (!real_kbrb_startChapterLoad) return nullptr;
+    return real_kbrb_startChapterLoad(a0, a1, a2, a3);
+}
+
 static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
 
 
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
+    // FIX 14: the parse is over, so the layout timer goes back to normal before anything below
+    // changes the page. The parse-end layout is a direct call and has already been allowed through.
+    ntf_parse_window_close();
     // Before the real call on purpose: locatePages runs one step inside it, so this is the
     // last point a layout change still reaches the page table. Uses the tracked view, not
     // self; both share an address here, but only that one is known to be a WebkitView.
@@ -3041,6 +3181,11 @@ static struct nh_hook NickelTypeFixHooks[] = {
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_loadFinished),
       .desc = "fix 10/11: correct page before pagination", .optional = true },
     //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase12loadFinishedEb
+    // FIX 14: open the chapter-load window; loadFinished closes it.
+    { .sym = "_ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover", .sym_new = "_ntf_kbrb_startChapterLoad",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_startChapterLoad),
+      .desc = "fix 14: open the chapter-load window", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
     // FIX 1 — now OPTIONAL so a missing FT symbol only sits out hinting (independence).
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
       .out = nh_symoutptr(real_FT_Load_Glyph), .desc = "load glyphs unhinted", .optional = true },
@@ -3212,6 +3357,8 @@ void _ntf_kepubReaderDtor(void *self) {
         ntf_chapter_view = nullptr;
         ntf_chapter_needs_fix = false;
         ntf_fontfix_logged = false;
+        ntf_parse_window_close();         // Fix 14: no reader, no load in flight
+
         ntf_pagecut_trim_armed = false;   // Fix 9: no reader, no pagination pass to correct
         ntf_pagecut_reset_snaps(false);   // Fix 9: do not retain the destroyed reader's frame
     }
@@ -3304,6 +3451,8 @@ static void ntf_log_unavailable_fixes() {
         NTF_LOG("Note: the reader-font quoting fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     if (ntf_pagecut_trim() && !ntf_pagecut_ready())
         NTF_LOG("Note: the page-boundary clipping fix could not attach completely on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_skip_parse_layout() && !(ntf_parse_layout_ready && real_kbrb_startChapterLoad))
+        NTF_LOG("Note: the mid-parse layout fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     if ((ntf_center_images() || ntf_dropcap_fix()) && !ntf_page_inspection_ready())
         NTF_LOG("Note: the page-inspection fixes could not attach completely on this firmware, so they are sitting out (other fixes are unaffected).");
 }
@@ -3338,6 +3487,8 @@ static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker) {
     ntf_log_fix_row("Centered images", ntf_center_images(), ntf_page_inspection_ready());
     ntf_log_fix_row("Drop caps", ntf_dropcap_fix(), ntf_page_inspection_ready());
     ntf_log_fix_row("Fast text shaping", ntf_fast_shaping(), ntf_shape_status.ng_enabled);
+    ntf_log_fix_row("Mid-parse layout", ntf_skip_parse_layout(),
+        ntf_parse_layout_ready && real_kbrb_startChapterLoad);
     ntf_log_fix_row("24 line-spacing values", ntf_more_spacing(),
         real_lineHeightScalars);
 }

@@ -4,6 +4,7 @@ _ntf_addApplicationFont
 _ntf_cwv_setViewportSize
 _ntf_cwv_setWritingDirection
 _ntf_kbrb_loadFinished
+_ntf_kbrb_startChapterLoad
 _ntf_kepubReaderCtor
 _ntf_kepubReaderDtor
 _ntf_lineHeightScalars
@@ -12,6 +13,7 @@ _ntf_qwf_render
 _ntf_qwp_setViewportSize
 _ntf_qws_setAttribute
 _ntf_qws_setFontFamily
+_ntf_wk_scheduleRelayout
 _ntf_wv_addCssToHtml
 _ntf_wv_locatePages
 _ntf_wv_pageRect
@@ -36,6 +38,7 @@ _ZN15KepubBookReader12pageStyleCssEb
 _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
 _ZN15KepubBookReaderD1Ev
 _ZN19KepubBookReaderBase12loadFinishedEb
+_ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
 _ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb
 _ZN9QWebFrame6renderEP8QPainterRK7QRegion
 _ZNK10WebkitView10totalPagesEv
@@ -69,6 +72,7 @@ ntf_more_spacing = '0'
 ntf_no_hinting = '1'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
+ntf_skip_parse_layout = '1'
 ntf_vertfix = '1'
 
 [fresh-install config file]
@@ -87,11 +91,12 @@ ntf_more_spacing = '0'
 ntf_no_hinting = '1'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
+ntf_skip_parse_layout = '1'
 ntf_vertfix = '1'
 
 [table vs file disagreements]
 none
 
 [long string literals]
-count  279
-sha256 7ff0dc5ae2e74e64b6fa6aa95f287b9cfb46c0fce4d85ce50c18eece315e4329
+count  294
+sha256 ece137362b7981cc879c4955e5ab9753f77bb99b3cbf4b6bd77a51443047e7c6

@@ -35,6 +35,7 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
 | A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
 | A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses the newer of the two text shapers Qt already carries, and remembers text it has already shaped instead of working it out again. Books generally open about twice as fast; letters and line breaks are unchanged. | **#12** |
+| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Skips the layout WebKit does halfway through reading the chapter in, which exists so a slow web page can show something early and is useless for a book already on the device. The finished page is identical. | **#14** |
 
 ### Which font you actually get
 
