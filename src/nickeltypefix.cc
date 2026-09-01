@@ -1818,6 +1818,9 @@ static int ntf_init() {
     if (!ntf_enabled()) {
         ntf_log_fix_statuses(NTF_HINT_MARKER_ABSENT);
         NTF_DBG("NickelTypeFix is turned off in its config; nothing was changed.");
+        // Clear the breadcrumb on the way out. Turning the mod off is a complete start, and
+        // leaving it behind makes every later boot report a crash that never happened.
+        ntf_crumb_clear_later();
         return 0;
     }
 

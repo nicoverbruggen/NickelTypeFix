@@ -334,6 +334,11 @@ The detour therefore marks a space glyph as a justification point after the real
 | + HarfBuzz NG | 794, 838, 812 ms | 1944 |
 | + NG and the cache | 481, 470, 478 ms | 1944 |
 
+Those are relayout times. A whole book open also parses the chapter, queries the database and
+registers fonts, none of which this touches, so the figure a reader notices is smaller than the
+ratio above. On device it comes out around twice as fast, and closer to twice on older hardware
+where the untouched work is a larger share of the total.
+
 **4.3x on relayout**, of which the shaper switch is 60% and the cache a further 17%. The cache costs about 1.3 MB for a chapter's worth of records. Switching shapers moves two line breaks in about 1,940; the cache moves none, and both were verified to render pixel-identical to their own baseline.
 
 **What this does not do.** It does not touch Fix 2's vertical pages, which run on WebKit's simple path and are never shaped. Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.

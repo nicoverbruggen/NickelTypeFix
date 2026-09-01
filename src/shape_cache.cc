@@ -75,6 +75,7 @@ static void ntf_fill_justification(const QTextEngine *e, const QScriptItem &si,
 }
 
 static int ntf_install_cache(void *sym);
+extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out);
 
 typedef int (*ShapeFn)(const QTextEngine *, const QScriptItem &, const ushort *, int,
                        QFontEngine *, const QVector<uint> &, bool);
@@ -96,10 +97,6 @@ static int ntf_shape_and_classify(const QTextEngine *e, const QScriptItem &si,
 
 
 namespace {
-unsigned long ntf_cache_calls  = 0;   // shaping calls seen
-unsigned long ntf_cache_hits   = 0;   // served from the cache
-unsigned long ntf_cache_misses = 0;   // passed to the original and recorded
-unsigned long ntf_cache_bypass = 0;   // too long, or no room to replay
 unsigned long ntf_cache_stored = 0;   // records held
 }   // namespace
 
@@ -240,10 +237,8 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
                                int itemLength, QFontEngine *fontEngine,
                                const QVector<uint> &itemBoundaries, bool kerningEnabled)
 {
-    ntf_cache_calls++;
 
     if (itemLength <= 0 || (uint)itemLength > NTF_CACHE_MAX_TEXT || !e->layoutData) {
-        ntf_cache_bypass++;
         return ntf_shape_and_classify(e, si, string, itemLength, fontEngine, itemBoundaries,
                                       kerningEnabled);
     }
@@ -275,11 +270,9 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
             memcpy(g.offsets,    r->offsets,    r->num_glyphs * sizeof(QFixedPoint));
             memcpy(g.attributes, r->attributes, r->num_glyphs * sizeof(QGlyphAttributes));
             memcpy(e->logClusters(&si), r->log_clusters, r->text_length * sizeof(ushort));
-            ntf_cache_hits++;
             pthread_mutex_unlock(&ntf_cache_lock);
             return (int)r->num_glyphs;
         }
-        ntf_cache_bypass++;
         pthread_mutex_unlock(&ntf_cache_lock);
         return ntf_shape_and_classify(e, si, string, itemLength, fontEngine, itemBoundaries,
                                       kerningEnabled);
@@ -290,7 +283,6 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
     // Classifies before recording, so a replayed hit carries what a fresh shape would.
     const int n = ntf_shape_and_classify(e, si, string, itemLength, fontEngine, itemBoundaries,
                                          kerningEnabled);
-    ntf_cache_misses++;
     if (slot && n > 0)
         ntf_record(slot, h, engine_id, string, (uint)itemLength, key_bits, (uint)n,
                    e->availableGlyphs(&si).mid(0, n), e->logClusters(&si));
@@ -428,23 +420,11 @@ static void ntf_disable_harfbuzz_ng(void *shape_text)
 
 static int ntf_install_cache(void *sym)
 {
+    // Through the checked detour, not a second copy of it. An eight-byte copy that does not decode
+    // instruction boundaries runs half an instruction on any firmware whose prologue differs, and
+    // this installs at init while the boot failsafe is still armed.
     if (!sym) return -1;
-    unsigned char *fn = (unsigned char *)((unsigned long)sym & ~1UL);
-
-    long pagesize = sysconf(_SC_PAGESIZE);
-    unsigned char *tramp = (unsigned char *)mmap(0, pagesize, PROT_READ | PROT_WRITE | PROT_EXEC,
-                                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (tramp == MAP_FAILED) return -2;
-
-    memcpy(tramp, fn, NTF_DETOUR_BYTES);
-    ntf_absolute_jump(tramp + NTF_DETOUR_BYTES, fn + NTF_DETOUR_BYTES);
-    __builtin___clear_cache((char *)tramp, (char *)tramp + NTF_DETOUR_BYTES + 8);
-    ntf_original_shape = (ShapeFn)((unsigned long)tramp | 1UL);
-
-    unsigned char detour[NTF_DETOUR_BYTES];
-    ntf_absolute_jump(detour, (void *)&ntf_cache_entry);
-    if (!ntf_write_code(fn, detour, NTF_DETOUR_BYTES)) return -3;
-    return 0;
+    return ntf_detour_at(sym, (void *)&ntf_cache_entry, (void **)&ntf_original_shape, 0);
 }
 
 
@@ -524,17 +504,16 @@ extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int
 
     unsigned char detour[NTF_DETOUR_BYTES];
     ntf_absolute_jump(detour, replacement);
-    if (!ntf_write_code(fn, detour, NTF_DETOUR_BYTES)) return -4;
+    if (!ntf_write_code(fn, detour, NTF_DETOUR_BYTES)) {
+        // Nothing reaches the trampoline if the jump was never written, and leaving it mapped
+        // would also leave *original pointing at code the caller must not run.
+        munmap(tramp, pagesize);
+        *original = 0;
+        return -4;
+    }
     return 0;
 }
 
-extern "C" int ntf_detour_symbol(const char *symbol, void *replacement, void **original)
-{
-    if (!symbol || !replacement || !original) return -1;
-    void *sym = dlsym(RTLD_DEFAULT, symbol);
-    if (!sym) return -2;
-    return ntf_detour_at(sym, replacement, original, 0);
-}
 
 extern "C" ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old,
                                                      void *shaper_ng)
@@ -566,10 +545,3 @@ extern "C" ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *sha
     return status;
 }
 
-extern "C" void ntf_shape_cache_stats(unsigned long *calls, unsigned long *hits,
-                                      unsigned long *records)
-{
-    if (calls)   *calls   = ntf_cache_calls;
-    if (hits)    *hits    = ntf_cache_hits;
-    if (records) *records = ntf_cache_stored;
-}
