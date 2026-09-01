@@ -18,7 +18,9 @@ Books from the Kobo store use Kobo's own format instead: **kepub** (typically `*
 
 The trade-off is the engine itself. It is a QtWebKit build from roughly 2013, frozen into the firmware, so its rendering bugs will never be fixed upstream. Font rasterization is done by Monotype's iType rather than plain FreeType, which brings quirks of its own (Fix 1). This QtWebKit-plus-iType stack is what NickelTypeFix patches; the RMSDK epub renderer is a separate world and is not touched.
 
-One more piece of context: by default this engine lays text out on WebKit's "simple" path, which is fast but typographically basic. A hidden setting, `webkitTextRendering=optimizeLegibility`, moves it to the "complex" path, which unlocks real OpenType handling: ligatures, proper kerning, and hyphenation. The catch is that several long-standing kepub rendering bugs (broken vertical text, uneven justification) live precisely on that complex path, and they are the reason many readers leave the setting off. Fixes 2, 3, and 4 repair those bugs so the setting becomes safe to enjoy; Fixes 1 and 6 apply regardless of it. Fix 5 (letter-spacing) applies wherever a book actually uses `letter-spacing`, which WebKit lays out on the complex path on its own, independent of the setting.
+One more piece of context: by default this engine lays text out on WebKit's "simple" path, which is fast but typographically basic. A hidden setting, `webkitTextRendering=optimizeLegibility`, moves it to the "complex" path, which unlocks real OpenType handling: ligatures, proper kerning, and hyphenation. The catch is that several long-standing kepub rendering bugs (broken vertical text, uneven justification) live precisely on that complex path, and they are the reason many readers leave the setting off. Fixes 2, 3, and 4 repair those bugs so the setting becomes safe to enjoy; Fixes 1 and 6 apply regardless of it. Fix 5 (letter-spacing) applies wherever a book actually uses `letter-spacing`, which WebKit lays out on the complex path on its own, independent of the setting. Fixes 7 and 12 belong with the first group: `cpsp` is a GPOS feature the complex path applies and the simple path never reaches, and the shaping cost Fix 12 removes is a complex-path cost, so a reader left on the simple path has nothing to gain from either.
+
+Nickel carries no `optimizeLegibility` literal at all: `ReadingSettings::getWebkitTextRendering` reads the setting with `"auto"` as its default and the value is substituted straight into `text-rendering: %1` in the injected stylesheet, so whatever the config says reaches WebKit verbatim.
 
 ## In plain language
 
@@ -233,24 +235,21 @@ Fail-safe throughout: a font with no GPOS table, no `cpsp`, an unreadable path (
 
 **The bug.** Depending on the font, the font size and the line spacing, a line of text at a page edge comes out sliced: a page starts with flattened ascenders or a clipped question mark, or ends with cut descenders. The missing ink is not lost. It is painted on the neighbouring page instead, as a thin strip of glyph tops along the bottom of the page before.
 
-**Mechanism.** The kepub reader builds its page table from one rectangle per line of text. `WebkitView::locatePages` collects the run rects, sorts them (`WebkitView::sortRectsByStart`), merges adjacent ones, and walks them page by page. The walk has two ways to place a page break:
+**Mechanism.** The kepub reader builds its page table from rectangles for the text runs. `WebkitView::locatePages` collects and sorts them, then chooses a shared boundary for each pair of pages. When two line boxes overlap, Kobo can place that boundary at the end of the earlier box even though the following line has already started. Both pages then paint part of a line which they do not own. At the smallest optional spacing, the overlap also changes Kobo's block handling: ordinary paragraphs and blockquotes can each be pushed onto a separate page.
 
-- at the **top** of the line that would overhang the page. That line goes whole to the next page and nothing is cut.
-- at the **bottom** of the previous rect. Whatever of the next line sits above that point stays on this page, so this is the mode that slices a line in half.
+The v0.8 fix shortened line boxes to remove small overlaps before pagination. This works when the overlap is empty line-box padding. It does not work for tight line spacing. On the device, a 70 px line box repeats every 48 px at the smallest optional spacing. The 22 px overlap can contain real glyph ink, so using the shortened box for paint cuts the line. No shared rectangular boundary can separate two visible line regions which overlap.
 
-The walk only takes the second one when two rects overlap, which sounds like a rare accident. It is not, because the rects always overlap. The reader floors every line box at a minimum line height derived from `QFontMetrics::height()`, which is ascent plus descent and so leaves out the few pixels of slack the layout adds below the baseline, and it takes that measurement at a hard-coded 12 px instead of the size the page is laid out at. Measured through the device's own Qt, QtWebKit and iType, the reported height at 12 px comes out a pixel or two under the real line box, so the derived ratio lands below the box's true ratio, and the 1.3 floor the reader also applies does not clear it either. Measuring at 12 px compounds it, because one pixel there is a twelfth of an em and the per-size roundings do not scale linearly. Every line box therefore ends up a couple of pixels taller than the distance to the next one, every pair of lines overlaps, and the slicing mode is the normal case rather than the exception.
+**The fix.** Pagination and painting now use separate geometry. The sort hook first keeps the complete line rectangles. It then shortens only the private vector which `locatePages` is about to walk, ending each confirmed line at the next line's start. Kobo still builds the page table, anchors, selections, and saved locations. It now does so without treating the overlap as page content or block overflow.
 
-**The fix.** In the same `sortRectsByStart` hook, before the walk reads the vector, each line box is trimmed so its end cannot pass the top of the next box that starts strictly below it. That removes the overlap, and with no overlap left the walk has nothing to select its slicing mode with, so it places every break at the top of the overhanging line. In the offline harness (three fonts, two pages, two to three sizes each) the break moves by about 2 px, no line changes page, page counts are unchanged, and page-bottom white space stays within a pixel of stock.
+Painting still uses the complete rectangles. A page renders through the bottom of its last owned real line, even when that extends into the next page's rectangle. The fix checks each page against the viewport height and moves the first real line which cannot fit to the following page. It then uses that new start when checking the next page. This keeps ownership consistent across the book instead of hiding a clipped line during paint. The live painter supplies the exact viewport height after the first render. Until then, the tallest page rectangle is a conservative fallback.
 
-The trim measures nothing about the font: no ink measurement, no `hhea` numbers, no font size, no conformance window. That is its reason to exist, because it then covers publisher-default books, Kobo's built-in fonts, and fonts whose files cannot be parsed. Boxes that end exactly on the next box's top are safe, because `mergeAdjacentRects` merges on containment or on a shared edge, never on touching (decoded at `0xbcd286`).
+Overlapping paint rectangles need an ownership rule. `WebkitView::pageRect` records the page rectangle. The following `QWebFrame::render` carries a region whose local bounding rectangle matches that page exactly. The fix uses one exact match to identify the reader's frame. Later full paints and partial repaints keep using that proved frame while the same reader is alive. During its render, `QPainter::drawGlyphRun` receives document-space run positions. The page accepts origins from its start up to, but not including, the start of the next page. It rejects the preceding line at the top and the following line at the bottom. Each page therefore paints only the complete lines it owns.
 
-The guards all leave the geometry alone when in doubt. Boxes sharing a top are runs on one line and never trim each other. A trim may remove at most a quarter of a box's height, so a vertically shifted run on the same line (a footnote superscript, an inline image starting a few pixels below the line top) cannot collapse its line's box. A trim that would leave a zero or negative height is skipped.
+The Libron device trace shows why the fit pass is needed. Page 2 first moved from `1203` to `1181`. Its last owned run then started at local `1196` and its 62 px ink box ended at `1258`, 12 px past the 1246 px book viewport. The fit pass moves the following page start from `2423` to that run's document position at `2377`. Page 2 then ends with the preceding run, whose ink ends at local `1212`. The same calculation moves the next boundary again, so changing one page does not create a new clipped line on the page after it.
 
-One more guard, added after the trim mis-fired on a device. Trimming a box to the top of the next one assumes the next one is a line, so that stopping there stops in the gap between two lines. A floated drop cap breaks that assumption: its box begins part-way up the line beside it and is several times as tall, and trimming to its top cuts the line short of its own letters. Measured on the device, a 76 px heading box was trimmed to 58 px against a 209 px drop cap box; the page then ended at 2510 while the heading's ink ran to 2528, so its descenders printed at the top of the next page. Two boxes that really are consecutive lines have similar heights, so the trim now also refuses a pair whose heights differ by more than half. The same book after the change ends the page at 2528 with the heading whole. The older quarter-of-the-height guard asks whether the trim is too big; this one asks whether the next box is a line at all, and both have to pass.
+The fix does not read font files, estimate ink bounds, cast Kobo's web-view wrapper to a Qt type, or dereference the captured frame pointer. The boundary guard compares only the line rectangles Kobo already produced. The paint guard compares two public rectangles, then compares the frame pointer by identity. The ownership rule compares the run origin with the corrected page start. A geometry mismatch or invalid run coordinate fails open and paints normally. The whole fix sits out unless all pagination and paint hooks attach, the view is the reader's own view, the writing direction is horizontal, and the call is on the GUI thread.
 
-The whole pass sits out unless it is the reader's own view (the same identity proof Fix 6 uses), the writing direction is horizontal, and the call is on the GUI thread; trimming only changes heights, so the sort order the following merge relies on is untouched. The per-pass arming is opened by the outermost `locatePages` frame and survives nested ones: a settings-change pass re-enters `locatePages` from inside itself (the writing-direction path re-renders the chapter, whose load path repaginates), and every sort of that pass has to be treated the same way, or the last walk to run decides the page table by chance. Device logs caught exactly that before release, an inner frame's exit disarming the still-running outer pass, whose untrimmed walk then overwrote the corrected page table.
-
-**What it cannot fix.** The break now lands at the top of a line's box, so ink that rises above that box in the first place is still shaved, exactly as stock already shaved it. Fonts whose accented capitals reach past their own declared ascent do exactly that, and no rect-level fix can move them. The "never worse than stock" result is measured for ink that stays inside its box. Devanagari's deep vowel marks are the case that could differ, by 1 to 3 px, and that has not been measured.
+With verbose logging enabled, a release build reports how many page boundaries moved. Development builds also log the line rectangles, page ownership, and each glyph-run decision as described below.
 
 ---
 
@@ -297,6 +296,54 @@ It is not. The order probe, run on device, prints the sequence for each chapter 
 
 ---
 
+## Fix 12 — Slow chapter opening · `ntf_fast_shaping`
+
+**The bug.** Opening a long kepub chapter stalls for several seconds, and the wait grows with the length of the chapter. Sampling the reader on device during a stall puts **85% of it under `QTextEngine::shapeText`**, with the hottest instruction across every profile a `ldrh [r8, r3, lsl #1]` — a binary search over a 16-bit table, which is a GPOS coverage lookup. Nothing about the book's structure, its storage or the database is involved.
+
+**Two causes, and each one hides the other.**
+
+*Qt uses the wrong shaper.* `libQtGui` carries two: `QTextEngine::shapeTextWithHarfbuzz`, Qt's own 2007 implementation, and `QTextEngine::shapeTextWithHarfbuzzNG`, HarfBuzz proper. It picks between them with one internal flag, and on this firmware the flag selects the old one. The old shaper applies a font's default-LangSys GPOS features wholesale, so its cost scales with the size of the font's tables rather than with what the text needs. It is also the reason Fix 7 exists, since `cpsp` is one of the features it applies indiscriminately.
+
+*Nothing caches a shaped run.* HarfBuzz caches its shape *plan* — the compiled set of lookups for a face and feature set — but never its output, and it cannot: the caller owns the buffer and may vary features per call. WebKit's word-level width cache only covers its simple path, and any font with GPOS takes the complex path. Qt does not cache either. So every occurrence of a word is shaped again from scratch. Measured on one chapter: **28,541 shaping calls, 24,373 of them for text already shaped with the same font and settings**.
+
+**The fix.** Both, because they compound.
+
+The flag is a stripped local static reached through the GOT, so there is no symbol to resolve and a fixed offset would only be right on the firmware it was measured on. `QTextEngine::shapeText` is exported, though, and reads the flag in the clear, so the mod disassembles its own instructions to find it:
+
+```
+ldr  r3, [pc, #N]     <- N indexes a literal holding the flag's GOT offset
+ldr  r2, [r7, #M]     <- the GOT base, saved in the prologue
+ldr  r3, [r2, r3]     <- &useHarfbuzzNG
+ldrb r3, [r3, #0]
+cmp  r3, #0
+```
+
+with the GOT base recovered from the `ldr r3, [pc, #N2]` / `add r3, pc` pair in the prologue. Every step is checked and the derived pointer must land inside `libQtGui` and hold a boolean, so an unrecognised build sits the fix out rather than writing somewhere wrong. On 4.45.23697 it derives exactly the address measured by hand.
+
+The cache then detours the selected shaper's prologue. On a miss it calls the real shaper and records what it wrote; on a hit it replays that. It therefore cannot change a glyph or a position, whichever shaper sits underneath. The key is the font engine, the text, the kerning flag, the paragraph direction, the script, the sub-font index and the item boundaries. Two things make it safe to hold: the key identifies the face by its `QFontDef` and engine type rather than by pointer, because Qt's font cache destroys engines on a timer and a later allocation could otherwise land on the same address with a different face; and a lock guards the table, because the reader is not the only thread that shapes. Records are capped, items longer than 96 characters are not cached, and a replay is skipped when the glyph buffer has no room.
+
+**One thing the newer shaper does not do.** `shapeTextWithHarfbuzzNG` fills in each glyph's cluster start but never its justification class, while the older path hands the whole attributes array to HarfBuzz, which sets both. `QTextEngine::justify` builds its distribution points from exactly that field, so under the newer shaper it finds none inside a text run. The line still reaches the margin, because the layout stretches the gaps *between* runs — but in a kepub every sentence is its own `koboSpan`, so all of the stretch lands on the spaces after full stops while ordinary word spaces stay tight. Measured on a real chapter, that takes the widest space on a line from 14 px to 56 px with the median unchanged at 6 px.
+
+The detour therefore marks a space glyph as a justification point after the real shaper runs, which is what the older shaper's HarfBuzz did. Only glyphs the shaper left unclassified are touched, so the older path and Arabic runs, which use their own classes, are never disturbed. It runs on every path that reaches the real shaper, not only where the cache records, because items too long to cache and items with no room to replay into would otherwise keep the empty classes. And if the engine is switched but the detour cannot be installed, the switch is undone rather than left running, since that combination would break justified text with nothing to report it.
+
+**Measured**, on one long chapter through the device's own Qt, QtWebKit and font engine, `text-rendering: optimizeLegibility` throughout, three repetitions:
+
+| | relayout | rects |
+|---|---|---|
+| stock, old shaper | 1981, 2076, 2031 ms | 1942 |
+| + HarfBuzz NG | 794, 838, 812 ms | 1944 |
+| + NG and the cache | 481, 470, 478 ms | 1944 |
+
+**4.3x on relayout**, of which the shaper switch is 60% and the cache a further 17%. The cache costs about 1.3 MB for a chapter's worth of records. Switching shapers moves two line breaks in about 1,940; the cache moves none, and both were verified to render pixel-identical to their own baseline.
+
+**What this does not do.** It does not touch Fix 2's vertical pages, which run on WebKit's simple path and are never shaped. Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.
+
+## Optional 24-value line-spacing slider · `ntf_more_spacing`
+
+Kobo normally gives the line-spacing slider 15 choices, running from `1.00` to `3.00`. This option replaces them with 24 closer ones, with finer control at the lower end: `0.80`, `0.81`, `0.82`, `0.83`, `0.84`, `0.86`, `0.88`, `0.90`, `0.92`, `0.94`, `0.96`, `0.98`, `1.00`, `1.02`, `1.05`, `1.07`, `1.10`, `1.15`, `1.20`, `1.25`, `1.30`, `1.35`, `1.40`, and `1.50`.
+
+NickelTypeFix does this by hooking `ReadingSettings::lineHeightScalars() const` and returning the expanded list. That function is where Kobo builds the slider's choices, and it returns the same 15 values on every 4.x firmware from the floor to 4.46. Replacing them at runtime changes nothing on disk. It does not alter the page-boundary fix or imitate spacing after the page has been laid out. The setting is off by default. When it is off, the original function returns Kobo's stock list unchanged. When the hook is unavailable, the option logs the problem and also leaves the stock list unchanged. No firmware file is changed on disk.
+
 ## Script in the book's frame
 
 Fixes 10 and 11 can't be written as a CSS rule, because what has to be decided is not selectable. No selector asks whether the author centred *this* figure, or whether *this* span is a drop cap rather than an italic phrase. Both questions are answerable by looking at the laid-out document, so the mod looks. This is a third technique alongside the PLT hooks and the byte patches, and it is worth knowing that the mod can run script inside book content.
@@ -322,9 +369,9 @@ One WebKit detail matters. A style write only marks the render tree dirty; geome
 
 ## Development probes
 
-`NTF_DEV_BUILD=1` compiles two always-on probes into the mod. Release builds omit their code, hooks, symbol lookups, and strings. Both probes observe only and do not change how a page is rendered or cut.
+`NTF_DEV_BUILD=1` adds two bounded logging probes. Release builds omit the probe-only hooks, code, and strings. Fix 9's paint hooks remain in release builds because they enforce page ownership; the development build only adds detailed observations around them.
 
-- The page-boundary probe dumps the kepub line boxes as the page walk received them, on both sides of Fix 9's trim in the same pass, names every box the trim's guards refused, and reads each placed page boundary back out of the finished page table. Every extra hook calls the real function first and hands its result back unchanged.
+- The page-boundary probe dumps the complete and pagination line boxes, reads each boundary back from the finished page table, logs each corrected `pageRect`, and records every glyph run which the ownership rule accepts or suppresses. Probe-only hooks are strict passthrough.
 - The page probe writes one line describing what the chapter actually contains: how many images there are, what their parent blocks look like, and which paragraphs start with an oversized element. It was written because the Fix 10 script matched nothing on a real store kepub, and store books are converted by Kobo rather than by kepubify, so the markup nesting is not necessarily the same. Repeated identical lines collapse to the first.
 
 ---
@@ -344,7 +391,7 @@ A fix's edits are all located and verified before *any* is written (both-or-noth
 
 - The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
 - The hooks and lookups (Fixes 1, 2, and 6 through 11) bind exact symbols and are `optional`; a rename makes that fix inert and leaves the rest running.
-- Development probes observe only. Their extra hooks call the real function first and pass its result back, so a page is laid out and cut identically. Release builds do not contain them.
+- Development probes observe only. Probe-only hooks call the real function first and pass its result back. Release builds do not contain them.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - Logging is quiet by default: a healthy boot writes nothing to `nickel-type-fix.log`. Problems (a fix that can't apply, a failed write, a safety trip, a mistake in the config file) are always logged, and a config mistake also switches full verbose logging on for that boot. Set `ntf_log:1` to log everything, so a single boot shows which fixes engaged.
 - Nothing is written to any device library on disk; a boot without the mod is stock.

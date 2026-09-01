@@ -31,9 +31,10 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
 | Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
-| Sometimes lines of text seem to be cut off and spread across two page turns. | Trims the boxes the reader breaks pages with so they can't overlap, then moves the line onto the next page whole. Works with any font. | **#9** |
+| Sometimes lines of text seem to be cut off and spread across two page turns. | Paginates without line-box overlap, then paints each complete line on one page. Works with any font. | **#9** |
 | Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
 | A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
+| A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses the newer of the two text shapers Qt already carries, and remembers text it has already shaped instead of working it out again. Letters and line breaks are unchanged. | **#12** |
 
 ### Which font you actually get
 
@@ -136,9 +137,10 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_kepub_fontfix` | `1` | Fix #6: re-apply the reading font on each kepub chapter. |
 | `ntf_cpsp_fix` | `1` | Fix #7: strip `cpsp` so capitals aren't spaced apart in body text. |
 | `ntf_quote_fontfamily` | `1` | Fix #8: quote the injected font family so numbered names apply. |
-| `ntf_pagecut_trim` | `1` | Fix #9: trim the line boxes so a page edge can't cut through a line. |
+| `ntf_pagecut_trim` | `1` | Fix #9: keep complete lines on one page when their line boxes overlap a page edge. |
 | `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
+| `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
 Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.

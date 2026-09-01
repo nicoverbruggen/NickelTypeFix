@@ -46,6 +46,8 @@ Fixes:
 - ntf_pagecut_trim:1       trim kepub line boxes so they never overlap and page edges stay clean (any font)
 - ntf_center_images:1      keep a centred image centred when text alignment is set to left
 - ntf_dropcap_fix:1        stop an oversized drop cap pushing the line under it down
+- ntf_fast_shaping:1       use Qt's newer text shaper and remember shaped text, so chapters open faster
+- ntf_more_spacing:0       replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 
 A healthy boot logs the firmware and a compact list showing whether each feature is enabled and

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9
+
+### Added
+
+- Long chapters open several times faster. The reader now uses Qt's newer text shaper and remembers text it has already shaped.
+- The reader can expose 24 line-spacing choices instead of the stock 15, running from 0.80 to 1.50.
+
+### Fixed
+
+- Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.
+
 ## v0.8
 
 ### Added
