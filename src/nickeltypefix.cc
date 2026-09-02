@@ -1440,7 +1440,12 @@ static bool ntf_write(const unsigned char *site, const unsigned char *repl, int 
 // with the replacement substituted into the anchor; on a unique match, fill
 // `f` so the caller's normal "already patched" path takes over. (The PUN edit
 // lies outside its anchor, so its already-patched state is caught by the
-// primary scan and this helper declines.)
+// primary scan and this helper declines.) Known limitation: the two LSP edits
+// share one anchor, and this rescan substitutes only one edit at a time, so a
+// FULLY patched pair matches neither scan and is misreported as "could not
+// attach". That state needs a second instance of this plugin in the process —
+// already a broken install, and the bytes themselves are correct — so the
+// wrong log line is accepted rather than handled.
 static bool ntf_scan_already_patched(const struct ntf_patch_t *p, struct ntf_find *f) {
     unsigned char patched[32];
     if (p->anchor_len <= 0 || (size_t)p->anchor_len > sizeof(patched)) return false;
