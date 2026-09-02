@@ -3508,7 +3508,9 @@ static bool ntf_css_generic_family(const QString &value) {
 // Wrap the value of every `font-family: <value> !important` declaration in `css` in double quotes,
 // where <value> is a single unquoted family name. The reader rule has exactly this shape (value
 // terminated by !important); a value terminated by ';' or '}' before any !important is a different
-// declaration and is left alone. Skips a value that is already quoted (leaves 'Sans-SerifJP' intact),
+// declaration and is left alone. A '{' before the !important means the "font-family:" text sat
+// outside a declaration (a comment, a selector) and the !important belongs to a later rule, so
+// that match is skipped too rather than quoting across rule boundaries. Skips a value that is already quoted (leaves 'Sans-SerifJP' intact),
 // a comma-separated fallback list, or a bare generic keyword. Only ever inserts two quote chars around
 // an unquoted value, so re-running on its own output is a no-op (the already-quoted skip makes it
 // idempotent). A real family name never contains a double-quote char, so double quotes are safe.
@@ -3526,7 +3528,7 @@ static void ntf_quote_reader_fontfamily(QString &css) {
         bool terminated = false;
         for (int i = vstart; i < bpos; i++) {
             QChar c = css.at(i);
-            if (c == QLatin1Char(';') || c == QLatin1Char('}')) { terminated = true; break; }
+            if (c == QLatin1Char(';') || c == QLatin1Char('}') || c == QLatin1Char('{')) { terminated = true; break; }
         }
         if (terminated) { from = vstart; continue; }
         int vs = vstart, ve = bpos;                            // trim to the value between colon and !important
