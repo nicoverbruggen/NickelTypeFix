@@ -11,6 +11,7 @@
 ### Fixed
 
 - Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.
+- A malformed font file can no longer make the capital-spacing fix read or write outside the font while inspecting it.
 
 ## v0.8
 

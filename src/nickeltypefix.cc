@@ -1998,7 +1998,8 @@ static bool ntf_strip_cpsp(uint8_t *data, size_t len) {
         const uint8_t *rec = data + 12 + (size_t)i * 16;
         if (ntf_be32(rec) == 0x47504F53u) { gpos_off = ntf_be32(rec + 8); gpos_len = ntf_be32(rec + 12); break; }  // 'GPOS'
     }
-    if (!gpos_off || gpos_len < 10 || (size_t)gpos_off + gpos_len > len) return false;
+    // Compare without adding: on 32-bit, gpos_off + gpos_len can wrap and slip past the check.
+    if (!gpos_off || gpos_len < 10 || gpos_off > len || gpos_len > len - gpos_off) return false;
     const uint8_t *gpos = data + gpos_off;
     uint16_t feat_list_off = ntf_be16(gpos + 6);   // GPOS header: version(4) scriptListOff(2) featureListOff(2)
     if (feat_list_off < 10 || (size_t)feat_list_off + 2 > gpos_len) return false;
