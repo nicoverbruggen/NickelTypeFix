@@ -5,7 +5,7 @@ This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eRead
 Each fix is independent and fail-safe. Individual fixes apply only if they can safely be applied. You can also disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
 
 > [!IMPORTANT]
-> This mod works on Kobo software version **4.x only** (inert on 5.x). See [Compatibility](#compatibility) for more information about compatibility.
+> This mod works on Kobo software version **4.x only** (inert on 5.x). See [Compatibility](#compatibility) for details.
 
 ## What it fixes
 
@@ -162,9 +162,9 @@ Requires Kobo **software version 4.23.15505+**.
 **This mod <u>does not work on 5.x</u>, which is currently available in Europe as an accessibility preview at the time of writing.**
 
 > [!TIP]
-> If you are on v5.x, I recommend downgrading and installing this mod instead, for an optimal reading experience.
+> If you are on v5.x, I recommend downgrading and installing this mod instead.
 
-This mod is not tied to any specific model, it works on most Kobo devices on the right software version.
+This mod is not tied to any specific model; it works on most Kobo devices on the right software version.
 
 For example, you can install it on:
 
