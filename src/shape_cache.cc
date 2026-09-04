@@ -44,6 +44,7 @@
 #include <unistd.h>
 
 #include "shape_cache.h"
+#include "small_caps.h"
 
 // Qt 5.2's newer shaper does not fill in the justification class. shapeTextWithHarfbuzzNG writes
 // only clusterStart, while the older path hands the whole attributes array to HarfBuzz, which sets
@@ -89,8 +90,13 @@ static int ntf_shape_and_classify(const QTextEngine *e, const QScriptItem &si,
                                   const ushort *string, int itemLength, QFontEngine *fontEngine,
                                   const QVector<uint> &itemBoundaries, bool kerningEnabled)
 {
-    const int n = ntf_original_shape(e, si, string, itemLength, fontEngine, itemBoundaries,
-                                     kerningEnabled);
+    // Fix 14 takes a small caps item first. It shapes the item's real text and substitutes the
+    // font's own small caps; -1 means it is not one of those and the real shaper runs as usual.
+    int n = ntf_smallcaps_shape(e, si, string, itemLength, fontEngine, itemBoundaries,
+                                kerningEnabled, ntf_original_shape);
+    if (n < 0)
+        n = ntf_original_shape(e, si, string, itemLength, fontEngine, itemBoundaries,
+                               kerningEnabled);
     if (n > 0) ntf_fill_justification(e, si, string, itemLength, n);
     return n;
 }
@@ -98,6 +104,7 @@ static int ntf_shape_and_classify(const QTextEngine *e, const QScriptItem &si,
 
 namespace {
 unsigned long ntf_cache_stored = 0;   // records held
+bool ntf_cache_records = true;        // false: the detour runs for fix 14 only, nothing is kept
 }   // namespace
 
 // Two things make this unsafe if left alone.
@@ -238,7 +245,8 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
                                const QVector<uint> &itemBoundaries, bool kerningEnabled)
 {
 
-    if (itemLength <= 0 || (uint)itemLength > NTF_CACHE_MAX_TEXT || !e->layoutData) {
+    if (!ntf_cache_records || itemLength <= 0 || (uint)itemLength > NTF_CACHE_MAX_TEXT
+        || !e->layoutData) {
         return ntf_shape_and_classify(e, si, string, itemLength, fontEngine, itemBoundaries,
                                       kerningEnabled);
     }
@@ -251,7 +259,8 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
     const unsigned key_bits = (kerningEnabled ? 1u : 0u)
                             | ((si.analysis.bidiLevel & 1u) << 1)
                             | ((unsigned)si.analysis.script << 2)
-                            | (sub_engine << 12);
+                            | (sub_engine << 12)
+                            | ((si.analysis.flags == QScriptAnalysis::SmallCaps ? 1u : 0u) << 20);
 
     const unsigned long engine_id = ntf_engine_identity(fontEngine);
     const unsigned long h = ntf_hash(engine_id, string, (uint)itemLength, key_bits, itemBoundaries);
@@ -514,6 +523,17 @@ extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int
     return 0;
 }
 
+
+// Fix 12 off, fix 14 on: put the detour on whichever shaper the firmware already selects, and
+// keep no records. The justification classification is harmless on the old shaper, which sets
+// the class itself and so leaves nothing for it to fill in.
+extern "C" bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *shaper_ng)
+{
+    ntf_cache_records = false;
+    const unsigned char *flag = ntf_find_ng_flag(shape_text);
+    void *sym = (flag && *flag) ? shaper_ng : shaper_old;
+    return ntf_install_cache(sym) == 0;
+}
 
 extern "C" ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old,
                                                      void *shaper_ng)

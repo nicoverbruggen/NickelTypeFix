@@ -31,6 +31,11 @@ Fixes:
   enough that the reader counts its pages from the corrected layout. A drop cap the book floats
   already behaves correctly and is left alone.
 
+- A book asking for small caps (font-variant: small-caps, as Standard Ebooks does for names and
+  chapter openings) getting ordinary capitals shrunk to 70%, thin and cramped next to the text;
+  when the reading font has its own small caps, those glyphs are used at their real size with the
+  font's own kerning. Fonts without small caps are unchanged. Needs optimizeLegibility.
+
 ## Config (KOBOeReader/.adds/nickel-type-fix/config) — auto-created on first boot
 
 - ntf_enabled:1            master switch; 0 = do nothing
@@ -48,6 +53,7 @@ Fixes:
 - ntf_dropcap_fix:1        stop an oversized drop cap pushing the line under it down
 - ntf_fast_shaping:1       use Qt's newer text shaper and remember shaped text, so chapters open faster
 - ntf_skip_parse_layout:1  skip the layout WebKit does mid-parse and throws away, so long chapters open faster
+- ntf_smallcaps:1          use the reading font's own small caps for font-variant: small-caps (needs optimizeLegibility)
 - ntf_more_spacing:0       replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)
 - ntf_log:0                verbose per-fix log to nickel-type-fix.log; off by default
 

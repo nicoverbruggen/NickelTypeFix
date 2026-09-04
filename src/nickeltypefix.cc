@@ -17,6 +17,8 @@
 //  12. Fast text shaping   — switch Qt to HarfBuzz NG and cache shaped runs (libQtGui)  [ntf_fast_shaping]
 //  13. Mid-parse layout    — suppress WebKit's discarded progressive layout during a chapter load,
 //      located by prologue signature in the stripped libQtWebKit   [ntf_skip_parse_layout]
+//  14. Real small caps     — detour QTextEngine::fontEngine and re-shape small caps runs with the
+//      font's own smcp glyphs and kerning, inside the fix 12 shaper detour (libQtGui)   [ntf_smallcaps]
 //
 // Cause + fix for each is documented in ABOUT.md. Fixes 1, 2, and 6–9 use NickelHook PLT hooks;
 // fixes 3–5 patch stripped device libs in memory (locate lib -> position-independent pattern-scan
@@ -70,6 +72,7 @@
 #include <QFile>
 #include "config.h"
 #include "shape_cache.h"
+#include "small_caps.h"
 #include "line_spacing_values.h"
 #include "pagecut_geometry.h"
 #include "util.h"
@@ -188,6 +191,14 @@ ntf_fast_shaping:1
 # finished page is identical either way. 0 = off.
 ntf_skip_parse_layout:1
 
+# Fix 14 - real small caps: a book that asks for small capitals (font-variant: small-caps, as
+# Standard Ebooks does for names and chapter openings) gets ordinary capitals shrunk to 70%, which
+# come out thin and cramped next to the text. When the reading font carries its own small caps
+# (an OpenType smcp feature), this uses those glyphs at their real size, with the font's own
+# kerning. A font without small caps is unchanged. Needs optimizeLegibility, like the justification
+# fixes. 0 = off.
+ntf_smallcaps:1
+
 
 
 # Verbose logging to nickel-type-fix.log. Off by default: a healthy boot logs only the startup table.
@@ -219,6 +230,7 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_dropcap_fix",        "1", "Fix 11 - stop an oversized drop cap pushing the next line down" },
     { "ntf_fast_shaping",       "1", "Fix 12 - use Qt's newer text shaper and cache shaped runs, so chapters open faster" },
     { "ntf_skip_parse_layout",  "1", "Fix 13 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
+    { "ntf_smallcaps",          "1", "Fix 14 - use the reading font's own small caps for font-variant: small-caps" },
     { "ntf_more_spacing",       "0", "replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
     { NULL, NULL, NULL },
@@ -1646,9 +1658,13 @@ static void ntf_parse_layout_install(void);   // FIX 13, defined with the rest o
 static void *ntf_qte_shapeText;
 static void *ntf_qte_shaperOld;
 static void *ntf_qte_shaperNG;
+static void *ntf_qte_fontEngine;
 
 // FIX 12: what ntf_shape_cache_enable() managed to attach, for the startup table.
 static ntf_shape_status_t ntf_shape_status = { false, false };
+static ntf_smallcaps_status_t ntf_smallcaps_status = { false };
+static bool ntf_smallcaps() { return ntf_global_config_bool("ntf_smallcaps", true); }
+static void ntf_smallcaps_log_line(const char *line) { NTF_DBG("%s", line); }
 static bool ntf_fast_shaping() { return ntf_global_config_bool("ntf_fast_shaping", true); }
 
 
@@ -1930,6 +1946,20 @@ static int ntf_init() {
             NTF_LOG("Note: the fast-shaping fix could not find Qt's shaper selector on this firmware, so it is sitting out (other fixes are unaffected).");
         else if (!ntf_shape_status.cache_installed)
             NTF_LOG("Note: the fast-shaping fix switched to the newer shaper but could not install its cache, so chapters open faster but not as fast as they could.");
+    }
+
+    // FIX 14: real small caps. Its post-pass lives in fix 12's shaper detour, so that detour has
+    // to be running: with fix 12 off it is installed on its own, keeping no records. Then
+    // QTextEngine::fontEngine is detoured so small caps items resolve to the full-size engine.
+    if (ntf_smallcaps()) {
+        ntf_crumb("enabling real small caps (fix 14)");
+        bool detour = ntf_shape_status.cache_installed;
+        if (!detour && !ntf_fast_shaping())
+            detour = ntf_shape_detour_only(ntf_qte_shapeText, ntf_qte_shaperOld, ntf_qte_shaperNG);
+        ntf_smallcaps_status = ntf_smallcaps_enable(ntf_qte_fontEngine, detour, ntf_smallcaps_log_line);
+        NTF_DBG("startup: small caps detour=%d installed=%d", detour, ntf_smallcaps_status.installed);
+        if (!ntf_smallcaps_status.installed)
+            NTF_LOG("Note: the small caps fix could not attach to Qt's text engine on this firmware, so it is sitting out (other fixes are unaffected).");
     }
 
     // FIX 13: detour FrameView::scheduleRelayout so it can be no-oped inside a chapter load.
@@ -3294,6 +3324,8 @@ static struct nh_dlsym NickelTypeFixDlsym[] = {
     //nb lookup * 4.23.15505 * _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
     { .name = "_ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb", .out = nh_symoutptr(ntf_qte_shaperNG), .desc = "fix 12: HarfBuzz NG, the fast shaper", .optional = true },
     //nb lookup * 4.23.15505 * _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
+    { .name = "_ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_", .out = nh_symoutptr(ntf_qte_fontEngine), .desc = "fix 14: the engine chosen per text item", .optional = true },
+    //nb lookup * 4.23.15505 * _ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_
     // NOTE: an earlier revision resolved `_ZThn24_N15KepubBookReaderD1Ev` here and treated its
     // existence as proof that WebkitView is the +24 subobject. That thunk belongs to a different
     // base at +24; the view offset is learned per book instead (ntf_learn_reader_view).
@@ -3492,6 +3524,7 @@ static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker) {
     ntf_log_fix_row("Centered images", ntf_center_images(), ntf_page_inspection_ready());
     ntf_log_fix_row("Drop caps", ntf_dropcap_fix(), ntf_page_inspection_ready());
     ntf_log_fix_row("Fast text shaping", ntf_fast_shaping(), ntf_shape_status.ng_enabled);
+    ntf_log_fix_row("Small caps", ntf_smallcaps(), ntf_smallcaps_status.installed);
     ntf_log_fix_row("Mid-parse layout", ntf_skip_parse_layout(),
         ntf_parse_layout_ready && real_kbrb_startChapterLoad);
     ntf_log_fix_row("24 line-spacing values", ntf_more_spacing(),
@@ -3563,7 +3596,8 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         ntf_log_css_alignment(self == ntf_kepub_reader_view ? "injected by Nickel (reader view)"
                                                             : "injected by Nickel (other view)", *css);
     try {
-        // WebkitView is shared by dictionary/store/browser views.  Only a call on
+        // WebkitView has two direct subclasses by typeinfo: KepubBookReaderBase (the reader)
+        // and DictionaryWebview (the dictionary popup and the notebook).  Only a call on
         // the current KepubBookReader may arm Fix 6; otherwise a later page change
         // could route a non-reader event into the reader-font methods. The
         // reader's view starts out unknown for every book, and the first

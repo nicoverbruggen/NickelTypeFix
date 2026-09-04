@@ -19,6 +19,10 @@ typedef struct ntf_shape_status_t {
 //   shaper_ng   QTextEngine::shapeTextWithHarfbuzzNG(...)
 ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old, void *shaper_ng);
 
+// Fix 12 off but fix 14 on: detour the shaper the firmware already runs, keeping no records, so
+// the small caps post-pass has a place to run. Returns whether the detour went in.
+bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *shaper_ng);
+
 // Same, at a raw address, for code with no symbol at all. Relocates whole instructions and
 // refuses anything PC-relative. relocated_out, if given, receives how many bytes moved.
 int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out);

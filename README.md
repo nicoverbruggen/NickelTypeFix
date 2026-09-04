@@ -15,6 +15,7 @@ Each fix is independent and fail-safe. Individual fixes apply only if they can s
 | --- | --- | --: |
 | Letters drift a pixel up or down, so the baseline looks uneven. Most fonts are affected. | Loads the font unhinted, which bypasses the problem. | **#1** |
 | Some fonts have `cpsp` metadata baked in, a feature meant only for all-caps runs. The reader applies it to body text too. This makes fonts look spaced incorrectly. | Strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing. Kerning and other features are untouched. | **#7** |
+| A book that asks for small caps (`font-variant: small-caps`, which Standard Ebooks uses for names and chapter openings) gets ordinary capitals shrunk to 70%. They come out thin and cramped next to the text, whatever the font carries. | When the reading font has its own small caps (an OpenType `smcp` feature), uses those glyphs at their real size, with the font's own kerning. A font without small caps is unchanged. Needs `optimizeLegibility`. | **#14** |
 
 ### How text is spaced on a line
 
@@ -125,6 +126,12 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 |---|---|---|
 | <img src="docs/screenshots/opener-broken.png" alt="openers original" width="250"> | <img src="docs/highlight/opener-diff.png" alt="openers diff" width="250"> | <img src="docs/screenshots/opener-correct.png" alt="openers fixed" width="250"> |
 
+### Fix #14: Real small caps
+
+| original | diff | fixed |
+|---|---|---|
+| <img src="docs/screenshots/smallcaps-broken.png" alt="small caps original" width="250"> | <img src="docs/highlight/smallcaps-diff.png" alt="small caps diff" width="250"> | <img src="docs/screenshots/smallcaps-correct.png" alt="small caps fixed" width="250"> |
+
 ## Configuration
 
 Settings are read from `KOBOeReader/.adds/nickel-type-fix/config` (auto-created with these defaults on the first boot; there's no shipped template file). Changes take effect on reboot.
@@ -150,6 +157,7 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
 | `ntf_fast_shaping` | `1` | Fix #12: use Qt's newer text shaper and remember text it has already shaped. |
 | `ntf_skip_parse_layout` | `1` | Fix #13: skip the layout WebKit does mid-parse and then discards. |
+| `ntf_smallcaps` | `1` | Fix #14: use the reading font's own small caps for `font-variant: small-caps`. |
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 

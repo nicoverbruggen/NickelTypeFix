@@ -7,6 +7,7 @@
 - Long chapters open several times faster. The reader now uses Qt's newer text shaper and remembers text it has already shaped.
 - Long chapters open faster again. WebKit used to lay a chapter out twice and throw the first one away; that pass is now skipped.
 - The reader can expose 24 line-spacing choices instead of the stock 15, running from 0.80 to 1.50.
+- Small caps in a book now use the reading font's own small cap glyphs when it has them, with the font's kerning, instead of capitals shrunk to 70%. Needs `optimizeLegibility`; fonts without small caps are unchanged.
 
 ### Fixed
 
