@@ -44,6 +44,7 @@ _ZN9QWebFrame6renderEP8QPainterRK7QRegion
 _ZNK10WebkitView10totalPagesEv
 _ZNK10WebkitView7webViewEv
 _ZNK10WebkitView8pageRectEi
+_ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_
 _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
 _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
 _ZNK11QTextEngine9shapeTextEi
@@ -73,6 +74,7 @@ ntf_no_hinting = '1'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
 ntf_skip_parse_layout = '1'
+ntf_smallcaps = '1'
 ntf_vertfix = '1'
 
 [fresh-install config file]
@@ -92,11 +94,12 @@ ntf_no_hinting = '1'
 ntf_pagecut_trim = '1'
 ntf_quote_fontfamily = '1'
 ntf_skip_parse_layout = '1'
+ntf_smallcaps = '1'
 ntf_vertfix = '1'
 
 [table vs file disagreements]
 none
 
 [long string literals]
-count  294
-sha256 c5c311987c50ffe84b269d8c571c0163e249510602ac598618853505dff55511
+count  307
+sha256 5219edfd7e47e28bfe6ee6179d2c5e019e3cb0174796745b5e18a381c217c437

@@ -382,6 +382,8 @@ Everything is read from the font's own GSUB and GPOS tables through the engine's
 
 **What it does not do.** It only runs on the complex path, so it needs `optimizeLegibility` like fixes 3, 7 and 12; on the simple path WebCore shrinks the capitals itself before any shaper is involved. It does not synthesize small caps for a font that has none. `c2sc` (capitals to small caps) is not applied, because Qt only flags lowercase stretches and leaves capitals in a small caps run as capitals, which is what `font-variant: small-caps` means.
 
+**Confirmed** on a Clara BW, firmware 4.45.23697, with KF Libron 0.25 and `optimizeLegibility` on: the startup table reports the fix active, the verbose log classifies the font as `has smcp, 5 ligature forms, 3 kern subtables`, and the first line of a chapter set in `font-variant: small-caps` renders the font's own small caps at the lowercase weight where it rendered thin 70% capitals before (the screenshots in the README). The `fontEngine` prologue detoured on the first attempt.
+
 **Safety.** The `fontEngine` detour is installed only after the shaper detour is confirmed running; the detour on its own would shape the uppercased text at full size, which is full capitals. A prologue that cannot be relocated sits the fix out with a log line. Every table read is bounds-checked and a malformed table reads as "no small caps", which is the stock outcome. Font records are never freed, since another thread may be reading one, and a session sees a handful of faces; past 32 faces a new face is treated as having no small caps.
 
 ## Optional 24-value line-spacing slider · `ntf_more_spacing`
