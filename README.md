@@ -2,10 +2,10 @@
 
 This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack, and makes books open faster.
 
-Each fix is independent and fail-safe. Individual fixes apply only if they can safely be applied. You can also disable individual fixes via a configuration file in `.adds/nickel-type-fix`.
+Each fix has its own configuration switch and checks its required hooks or code patterns before applying. Some fixes share hooks or detours, so a failed check can disable more than one feature. These checks reduce risk; they do not prove that every font, book, or firmware behaves correctly. See [Safety](#safety) for the checks and their limits.
 
 > [!IMPORTANT]
-> This mod works on Kobo software version **4.x only** (inert on 5.x). See [Compatibility](#compatibility) for details.
+> This mod supports Kobo software version **4.x only**. See [Compatibility](#compatibility) for details.
 
 ## What it fixes
 
@@ -14,12 +14,14 @@ Each fix is independent and fail-safe. Individual fixes apply only if they can s
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
 | Letters drift a pixel up or down, so the baseline looks uneven. Most fonts are affected. | Loads the font unhinted, which bypasses the problem. | **#1** |
-| Some fonts have `cpsp` metadata baked in, a feature meant only for all-caps runs. The reader applies it to body text too. This makes fonts look spaced incorrectly. | Strips `cpsp` from each font as it loads, for any font, so capitals sit at their normal spacing. Kerning and other features are untouched. | **#7** |
+| Some fonts have `cpsp` metadata baked in, a feature meant only for all-caps runs. The reader applies it to body text too. This makes fonts look spaced incorrectly. | Removes `cpsp` from fonts loaded through Qt's application-font API when the file and table checks pass. Other features are retained. | **#7** |
 | A book that asks for small caps (`font-variant: small-caps`, which Standard Ebooks uses for names and chapter openings) gets ordinary capitals shrunk to 70%. They come out thin and cramped next to the text, whatever the font carries. | When the reading font has its own small caps (an OpenType `smcp` feature), uses those glyphs at their real size, with the font's own kerning. A font without small caps is unchanged. Needs `optimizeLegibility`. | **#14** |
+
+Small-caps substitution uses the primary reading font. It skips right-to-left runs and glyphs supplied by a fallback font; it does not implement every OpenType lookup format.
 
 ### How text is spaced on a line
 
-These three only work when `optimizeLegibility` has been turned on (see below).
+These fixes act on WebKit's complex text path. `optimizeLegibility` enables that path; a book's `letter-spacing` can also select it without that setting.
 
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
@@ -32,18 +34,20 @@ These three only work when `optimizeLegibility` has been turned on (see below).
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
 | Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
-| Sometimes lines of text seem to be cut off and spread across two page turns. | Paginates without line-box overlap, then paints each complete line on one page. Works with any font. | **#9** |
+| Sometimes lines of text seem to be cut off and spread across two page turns. | Repairs line-box overlap at page edges and paints each matched line on one page. Layouts that fail its geometry checks are left alone. | **#9** |
 | Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
 | A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
 
 ### How fast a book opens
 
-Neither of these changes a single letter, space or line break on the finished page. They only stop the reader doing the same work twice.
+The shaping cache reuses results from the selected shaper. Switching to HarfBuzz NG can change glyph selection, spacing, or line breaks because it applies font features differently. The switch affects Qt text throughout Nickel, including its UI, and includes a repair for the selected-font dropdown preview.
 
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
-| A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses the newer of the two text shapers Qt already carries, and remembers text it has already shaped instead of working it out again. Books generally open about twice as fast; letters and line breaks are unchanged. | **#12** |
-| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Skips the layout WebKit does halfway through reading the chapter in, which exists so a slow web page can show something early and is useless for a book already on the device. The finished page is identical. | **#13** |
+| A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses HarfBuzz NG and caches shaped text. The documented device measurements found roughly twice as fast book opening; the gain depends on the book, font, and device. | **#12** |
+| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Suppresses scheduled layout during a tracked chapter load, while allowing forced layout to finish the chapter. Short chapters may have no intermediate layout to skip. | **#13** |
+
+In the [recorded measurements](ABOUT.md#fix-12--slow-chapter-opening--ntf_fast_shaping), switching shapers changed two line breaks in about 1,940; enabling the cache changed none. The layout-skipping test retained the same 121-page table. These are results for the tested chapter, not guarantees for every book. The [ARM regression suite](test/rendering/README.md) compares cached and uncached rendering under each shaper separately.
 
 ### Which font you actually get
 
@@ -56,25 +60,20 @@ Neither of these changes a single letter, space or line break on the finished pa
 
 **The built-in reader application for Kobo devices has some rendering issues, especially when you enable `optimizeLegibility`. This mod aims to fix most rendering bugs in the reader application.**
 
-The point is to keep `optimizeLegibility` (which gets you ligatures, better text rendering, and optionally hyphenation) without any bugs. The cause of the bugs and the mechanism for each fix is [documented here](ABOUT.md).
+The point is to make `optimizeLegibility` usable by correcting the specific defects listed above. The cause of each defect and the mechanism for its fix is [documented here](ABOUT.md).
 
 Oh, and there's a few other fixes, too!
 
 ## What is `optimizeLegibility`?
 
-It's a way to make your Kobo display advanced typography features, like ligatures and hyphenation. Unfortunately, it's kind of buggy, but this mod fixes that.
+It selects WebKit's complex text path, which supports advanced typography such as ligatures and kerning. It also exposes several rendering defects that this mod addresses. The result depends on the font, book styling, and reader settings.
 
 It's off by default and is a manual opt-in in the Kobo config file (**not** a UI setting). Edit `KOBOeReader/.kobo/Kobo/Kobo eReader.conf` and add:
 
     [Reading]
     webkitTextRendering=optimizeLegibility
 
-After doing that, reboot. You now get the following with `optimizeLegibility` set:
-
-- Working GPOS functionality w/ fonts (improved tracking and kerning)
-- Hyphenation and ligatures (advanced font features)
-- Working justification (fixed with this mod)
-- Working vertical text rendering (fixed with this mod)
+After doing that, reboot. The setting enables the text path used by the justification and small-caps fixes. Hyphenation still depends on the book's language, styling, and reader support. The vertical-text fix returns vertical books to WebKit's simple path.
 
 ## Screenshots
 
@@ -142,7 +141,7 @@ When you update the mod, any keys added by the new version are appended to your 
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `ntf_enabled` | `1` | Master switch. `0` behaves as if the mod isn't installed. |
+| `ntf_enabled` | `1` | Master switch. `0` disables rendering changes; the plugin still loads, reads config, and logs startup. |
 | `ntf_no_hinting` | `1` | Fix #1: load glyphs unhinted. |
 | `ntf_hinting_allowlist` | *(empty)* | Families to keep natively hinted, comma-separated, e.g. `Georgia, Kobo Nickel`. |
 | `ntf_vertfix` | `1` | Fix #2: vertical (tategaki) text. |
@@ -161,23 +160,15 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
-Anything that goes wrong is logged whatever `ntf_log` is set to: a fix that can't apply on your firmware, a failed patch, a safety trip, or a problem in the config file itself such as a misspelled setting or an invalid value. Set `ntf_log` to `1` to also log each fix as it applies, so a single boot shows which fixes were active.
+Detected installation failures, safety trips, and config errors are logged regardless of `ntf_log`. A healthy boot also logs the firmware, build identity, and feature status. Set `ntf_log` to `1` for detailed traces. An active status means the required installation checks passed; it does not confirm correct rendering of every book or font.
 
 ## Compatibility
 
 Requires Kobo **software version 4.23.15505+**.
 
-**This mod <u>does not work on 5.x</u>, which is currently available in Europe as an accessibility preview at the time of writing.**
+**Kobo software 5.x is unsupported.** The mod targets the Qt 5 / QtWebKit stack used by 4.x firmware.
 
-> [!TIP]
-> If you are on v5.x, I recommend downgrading and installing this mod instead.
-
-This mod is not tied to any specific model; it works on most Kobo devices on the right software version.
-
-For example, you can install it on:
-
-- Older devices, which run the 4.38 branch (at the time of writing)
-- Newer devices, which run the 4.46 branch (at the time of writing)
+Compatibility checks cover firmware targets rather than a list of device models. Passing those checks does not replace testing on the device.
 
 The three in-memory byte patches and the WebKit layout detour locate code by instruction patterns. The anchor checks cover firmware 4.23.15505 through 4.46.23836 and verify that each pattern is unique and carries the expected bytes. The two Qt detours resolve exported function symbols instead. None uses a fixed firmware address. A missing or incompatible target skips the affected fix.
 
@@ -189,7 +180,9 @@ The mod checks each fix before applying it and keeps a boot failsafe armed durin
 
 Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`. It starts the three-second rename-back timer only after NickelTypeFix has initialized successfully.
 
-If installing a hook, byte patch, or detour crashes or hangs Nickel during initialization, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
+If Nickel crashes or hangs during initialization, the rename-back timer has not started. On the next boot the plugin is absent from its load path and does not load. A hung device may still need a forced restart.
+
+Once the timer restores the filename, this protection ends. It does not detect later crashes or rendering errors, and a successful startup does not prove that the mod is safe for every subsequent operation.
 
 ### Per-fix graceful degradation
 
@@ -242,7 +235,7 @@ Copy `KoboRoot.tgz` to the Kobo's `.kobo` folder, eject, and reboot. The mod sho
 
 ## Uninstall
 
-Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook removes the mod on the next boot. The in-memory patches revert automatically (nothing was written to disk).
+Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook removes the mod on the next boot. The in-memory patches disappear when Nickel exits; the firmware library files are not patched on disk.
 
 ## Development
 

@@ -44,7 +44,7 @@ The container uses the toolchain's FreeType backend. Device tests still need to 
 2. Eject and reboot; the firmware installs it and deletes the tgz.
 3. The mod's folder is `KOBOeReader/.adds/nickel-type-fix/` (`doc`, `uninstall`, `config`, and once it logs, `nickel-type-fix.log`). The config is generated from an in-code table rather than a shipped `default` file, so keys added by a later version are appended to an existing config on the next boot.
 
-Boot safety / recovery: NickelHook's failsafe (`failsafe_delay = 3`) uninstalls the mod if Nickel crashes within ~3 s of boot; power off within that window to recover a bad build. Deleting `.adds/nickel-type-fix/uninstall` (or creating an empty `uninstall-now` file next to it) and rebooting also removes it, along with everything the mod installed.
+Boot safety / recovery: NickelHook renames the plugin out of its load path before installing hooks. It starts the three-second restore timer after initialization succeeds. If Nickel exits before the restore, the plugin remains outside its load path on the next boot. A hang during initialization may require a forced restart; failures after the restore are outside this protection. Deleting `.adds/nickel-type-fix/uninstall` (or creating an empty `uninstall-now` file next to it) and rebooting removes the mod and its installed files.
 
 ## Logs & debugging
 

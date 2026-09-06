@@ -16,12 +16,12 @@
 // settings.
 //
 // Together these take that chapter's relayout from 2029 ms to 476 ms, measured through the
-// device's own Qt, QtWebKit and font engine. Neither changes a glyph: the cache records what the
-// real shaper produced and replays exactly that, and both were verified to render pixel-identical
-// to stock.
+// device's own Qt, QtWebKit and font engine. The switch to NG moved two line breaks in that
+// measurement; adding the cache moved none. Cache replay should match an uncached run through
+// the same shaper and post-processing, which the ARM rendering tests check for their fixtures.
 //
-// Everything here fails closed. If the flag cannot be located, or either shaper symbol is
-// missing, the fix reports that it sat out and the reader runs stock.
+// If the NG flag or symbol is unavailable, installation can still cache the old shaper.
+// If the mod switches to NG but cannot install the detour, it restores the old shaper.
 //
 // Reaching QTextEngine's internals needs Qt's private headers, which is why this lives in its own
 // file: the `private`/`protected` redefinition below must not leak into the rest of the mod. It is

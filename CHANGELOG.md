@@ -2,6 +2,10 @@
 
 ## v0.9
 
+### Documentation
+
+- Clarified shared fix dependencies, process-wide text shaping, rendering test limits, and the boot failsafe's recovery window.
+
 ### Added
 
 - Development builds include a source fingerprint in their version and log lines, distinguishing them from release builds and earlier uncommitted edits.
