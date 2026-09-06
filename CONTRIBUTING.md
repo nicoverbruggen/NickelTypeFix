@@ -24,9 +24,13 @@ Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD
 
 Run `test/detour/check.sh` on Linux, including inside the build container. It checks real memory mappings and injects installation failures. CI runs it with the other local checks. Building the same test for ARM also executes the replacement and original Thumb functions; the host run checks their bytes and permissions. Device testing must still check startup and all three detoured features.
 
+## Rendering regression tests
+
+Run `test/rendering/check.sh` with Podman or Docker. CI uses the same command. It builds the tests against pinned ARM Qt 5.2.1 and runs both shapers under QEMU, checking the dropdown preview, cache replay, small-caps rendering, and detour installation. The image fetches checksummed public dependencies on its first build; test execution needs no network or device files. See [coverage and runtime details](test/rendering/README.md).
+
 ## Testing on a device
 
-The [font dropdown regression](test/font-dropdown/README.md) reproduces the NG fallback and tests the label repair under ARM Qt 5.2.1. It needs a separate runtime setup and is not part of CI. Device testing must still confirm Nickel's font reload hook and the actual preview.
+The container uses the toolchain's FreeType backend. Device tests still need to confirm Nickel's hook routing, font reload sequence, iType rendering, and actual reader behavior.
 
 1. Copy `KoboRoot.tgz` into the Kobo's hidden `.kobo` folder over USB.
 2. Eject and reboot; the firmware installs it and deletes the tgz.

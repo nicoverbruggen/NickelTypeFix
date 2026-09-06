@@ -4,9 +4,7 @@
 #include <QtGui/QImage>
 #include <QtCore/QDebug>
 #include <thread>
-#ifdef NTF_TEST_NICKELTC_QT
-#include <dlfcn.h>
-#endif
+#include "../rendering/qt_runtime.h"
 
 #include "font_dropdown.h"
 
@@ -44,19 +42,7 @@ static int select_font(QLabel &label, const QString &text) {
 
 int main(int argc, char **argv) {
     const bool ng = qgetenv("QT_HARFBUZZ") != "old";
-#ifdef NTF_TEST_NICKELTC_QT
-    // The toolchain's Kobo Qt ignores QT_HARFBUZZ. These offsets apply only to its
-    // QtGui binary, never to device firmware. Refuse a different runtime layout.
-    void *shape = dlsym(RTLD_DEFAULT, "_ZNK11QTextEngine9shapeTextEi");
-    Dl_info info = {nullptr, nullptr, nullptr, nullptr};
-    check(dladdr(shape, &info) &&
-          ((uintptr_t)shape & ~uintptr_t(1)) - (uintptr_t)info.dli_fbase == 0x1219c4,
-          "unexpected toolchain QtGui layout");
-    unsigned char *base = static_cast<unsigned char *>(info.dli_fbase);
-    unsigned char *flag = *reinterpret_cast<unsigned char **>(base + 0x2e11b0);
-    check(flag == base + 0x2e3d78 && *flag <= 1, "unexpected toolchain shaper selector");
-    *flag = ng;
-#endif
+    ntf_test_select_shaper(ng);
     QApplication app(argc, argv);
     if (qVersion() != QStringLiteral("5.2.1")) {
         qWarning("This regression reproduces Qt 5.2.1 font caching; use that runtime.");

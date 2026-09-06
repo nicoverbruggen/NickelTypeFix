@@ -1,0 +1,10 @@
+# SHA-256  filename  URL
+# Debian snapshots: qemu-user-static 7.2+dfsg-7+deb12u18+b3 amd64, libc6 2.36-9+deb12u14 armhf, fonts-dejavu-core 2.37-6.
+c3e3ba2bd87f8c5b9a5da5ef21b5a3b82d7c63b89dd448d9ddaa4eabc5b6e402 qemu.deb https://snapshot.debian.org/file/5708c6db00b35729b429a04773a40acd0f376826
+758c68b92654747025b48476a45c315bf16df1321224abdd9be672bfd120be45 libc.deb https://snapshot.debian.org/file/09067e3219971a778c5f02ade0f9ad5955347d4c
+b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5 NotoSans-Regular.ttf https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSans/NotoSans-Regular.ttf
+ceea25b464a656dc3b26849bab9356740401af62aedf1bfa8b7f0d9b75925b1b NotoSansArabic-Regular.ttf https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansArabic/NotoSansArabic-Regular.ttf
+e31e2437f6c4ebd67d6bbbfa730ba077dbeb10deda42784fbac02559bcbfee45 Vollkorn-Regular.ttf https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Regular.ttf
+0dab92d0544f7b233403f14b84a663bdbfa746982eda629e7f4f9ffe1b036feb Noto-OFL.txt https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE
+53f9c99fa3d47f7d632a42ee7bab4a834a60a744f6026d676c3a223cef2b2ef3 Vollkorn-OFL.txt https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/OFL.txt
+8892669e51aab4dc56682c8e39d8ddb7d70fad83c369344e1e240bf3ca22bb76 dejavu.deb https://snapshot.debian.org/file/b2204a626ea3aa2d4fa0f52a09b6e4c38a3ba180

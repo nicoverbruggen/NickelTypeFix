@@ -1,12 +1,6 @@
 # Font dropdown regression
 
-This test runs the production repair against Qt 5.2.1 widgets. It needs that Qt runtime and two font fixtures: `Vollkorn-Regular.ttf` and `NotoSans-Regular.ttf`. Both are available in the firmware's font directory. The test does not enable the mod or install any tracing hooks.
-
-Compile `font_dropdown_test.cc` and `../../src/font_dropdown.cc` with Qt5Widgets and pthreads, using C++11. Generate `font_dropdown_test.moc` from the test source with the matching Qt `moc` and put its directory on the include path. Build outputs belong in a scratch directory.
-
-The Nickel toolchain's Qt ignores `QT_HARFBUZZ`. For that runtime, compile with `-DNTF_TEST_NICKELTC_QT` and link `libdl`. This test-only option sets the selector before QApplication starts. It checks the known toolchain QtGui layout before using private offsets and refuses a different layout. Do not use this option with device firmware libraries.
-
-Run the binary with the two font paths in the order above. Set `QT_QPA_PLATFORM=offscreen` and `QT_QPA_FONTDIR` to an empty directory, so a separately installed font cannot hide the removal. Run once with `QT_HARFBUZZ=ng` and once with `QT_HARFBUZZ=old`. The ARM build can run under QEMU with the toolchain's Qt 5.2.1 runtime.
+Run `test/rendering/check.sh` from any directory. The [rendering container](../rendering/README.md) compiles this test with the production repair and runs it under ARM Qt 5.2.1 with both shapers. CI uses the same command. It supplies pinned public Vollkorn and Noto Sans fonts, an empty system font directory, and an offscreen platform. No firmware files or device setup are required.
 
 With NG, removing the selected font must first reproduce a fallback that survives font reload. With the old shaper, it must retain the correct font. The repair must restore the original pixels in both cases. Two cycles check repeated changes. Popup rows, unrelated labels, a different family, an empty family, worker-thread calls and an outdated selection are checked separately. The widgets remain hidden, as the Aa panel can be closed when font loading finishes.
 

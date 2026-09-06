@@ -47,6 +47,19 @@ jobs:
             KoboRoot.tgz
             src/libnickeltypefix.so
 
+  rendering:
+    name: ARM rendering regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check rendering in the pinned Qt container
+        run: test/rendering/check.sh
+
   anchors:
     name: Byte-patch anchors
     runs-on: ubuntu-latest
