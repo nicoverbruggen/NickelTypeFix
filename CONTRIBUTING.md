@@ -20,6 +20,10 @@ Version stamping: NickelHook.mk bakes `git describe --tags --always --dirty` int
 
 Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD=1 ./build.sh` to compile both probes in. A development build runs them whenever the mod is enabled; there are no probe config keys. The page-boundary probe logs the line boxes before and after Fix 9, its guard refusals, and the resulting page boundaries. The page probe logs a short description of each distinct chapter document. Both observe only and leave pagination unchanged.
 
+## Detour installer tests
+
+Run `test/detour/check.sh` on Linux, including inside the build container. It checks real memory mappings and injects installation failures. CI runs it with the other local checks. Building the same test for ARM also executes the replacement and original Thumb functions; the host run checks their bytes and permissions. Device testing must still check startup and all three detoured features.
+
 ## Testing on a device
 
 The [font dropdown regression](test/font-dropdown/README.md) reproduces the NG fallback and tests the label repair under ARM Qt 5.2.1. It needs a separate runtime setup and is not part of CI. Device testing must still confirm Nickel's font reload hook and the actual preview.

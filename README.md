@@ -179,21 +179,21 @@ For example, you can install it on:
 - Older devices, which run the 4.38 branch (at the time of writing)
 - Newer devices, which run the 4.46 branch (at the time of writing)
 
-Every fix that edits code anchors to a position-independent instruction pattern rather than a fixed address: three in-memory byte patches, and one detour that finds its function by the prologue, because the library it lives in has no symbols. All four are checked against every firmware release from 4.23.15505 to 4.46.23836, where each must be present, unique, and carry the bytes it expects. Anything else and the fix sits out.
+The three in-memory byte patches and the WebKit layout detour locate code by instruction patterns. The anchor checks cover firmware 4.23.15505 through 4.46.23836 and verify that each pattern is unique and carries the expected bytes. The two Qt detours resolve exported function symbols instead. None uses a fixed firmware address. A missing or incompatible target skips the affected fix.
 
 ## Safety
 
-There are two independent layers of protection, so a failure at worst sits a single fix out. The mod should also not be able to brick the device.
+The mod checks each fix before applying it and keeps a boot failsafe armed during installation. A missing target skips the affected fix. If a failed code write cannot be safely rolled back, the mod stops startup and requests a reboot.
 
 ### Whole-mod boot failsafe
 
 Before any hook or in-memory patch is applied, NickelHook renames the plugin to `libnickeltypefix.so.failsafe`. It starts the three-second rename-back timer only after NickelTypeFix has initialized successfully.
 
-If applying the hooks or the justification patches ever crashes or hangs Nickel during boot, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
+If installing a hook, byte patch, or detour crashes or hangs Nickel during initialization, that rename-back never runs: on the next boot the plugin is no longer at its load path, the mod stays disengaged, and the boot loop is broken automatically. No user action is needed to recover.
 
 ### Per-fix graceful degradation
 
-Each fix engages only if it can be applied safely, and a failure in one never affects the others.
+A fix stays off when its required hooks or code checks fail. Features that share a detour also depend on that detour installing successfully.
 
 1. Hooked and looked-up symbols are optional: if a symbol isn't present on a given firmware, that fix does not run (instead of aborting the mod).
 
@@ -208,6 +208,20 @@ Each fix engages only if it can be applied safely, and a failure in one never af
 6. Fixes #10 and #11 run a small script inside the book's own page, because what they have to decide (did the book itself centre this image, is this letter a drop cap) can't be written as a styling rule. The script only reads the chapter and sets a style on the few elements it recognises. It adds nothing to the book, sends nothing anywhere, and never touches the book's files. It runs on the reader's own view and nowhere else, and an error in it skips that one update instead of reaching Nickel. [ABOUT.md](ABOUT.md#script-in-the-books-frame) describes it in full.
 
 7. The in-memory patches (justification and letter-spacing) validate the complete target range and instruction alignment before writing, keep the containing page executable so another Nickel thread cannot fault in unrelated code on that page, replace each instruction with one atomic store, verify the bytes, restore the original segment permissions, and roll back every site touched if a later step fails. If a rollback itself cannot be verified, NickelTypeFix logs the failure and invokes the firmware's normal reboot command before the failsafe can be disarmed (with the kernel reboot syscall as a fallback), so the next start is stock.
+
+### Function detours
+
+Fixes #12 through #14 use three detours. Each replaces a function's first eight bytes with a jump into the mod and keeps a callable copy of the displaced instructions in a trampoline:
+
+- The active `QTextEngine` shaper passes through the shaping cache, justification repair, and small-caps processing.
+- `QTextEngine::fontEngine` supplies the full-size font engine for fonts with real small caps.
+- `WebCore::FrameView::scheduleRelayout` suppresses intermediate layout during a tracked chapter load.
+
+These intercept direct calls as well as calls through library imports. The Qt detours apply to callers throughout Nickel, including UI text. They are not restricted to the book renderer.
+
+The shared installer checks the mapped code range, permissions, alignment, and instruction boundaries before changing anything. It rejects the PC-relative instructions recognized by its prologue guard. It prepares and verifies a read-only executable trampoline, verifies the entry patch, and restores the target page's original permissions. A failed installation restores and verifies the original bytes and permissions. If recovery cannot be verified, it uses the same reboot path as the byte patches while the boot failsafe remains armed.
+
+Installation runs only during startup. Replacing the eight-byte entry is not atomic, so no other thread may execute the target during that change. The installer does not suspend threads, and its instruction guard is not a general Thumb relocator. Firmware checks and device testing remain necessary. [ABOUT.md](ABOUT.md#function-detour-installation) describes the mechanism and limits.
 
 ## Build
 

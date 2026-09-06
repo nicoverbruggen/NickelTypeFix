@@ -33,6 +33,9 @@ jobs:
       - name: Check line-spacing values
         run: test/spacing/check.sh
 
+      - name: Check detour installation
+        run: test/detour/check.sh
+
       - name: Check firmware compatibility
         run: nickelbench check-source src
 

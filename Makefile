@@ -1,7 +1,7 @@
 include NickelHook/NickelHook.mk
 
 override LIBRARY  := src/libnickeltypefix.so
-override SOURCES  += src/config.c src/nickeltypefix.cc src/shape_cache.cc src/small_caps.cc src/font_dropdown.cc
+override SOURCES  += src/config.c src/nickeltypefix.cc src/shape_cache.cc src/detour.cc src/small_caps.cc src/font_dropdown.cc
 
 # The vertical-text fix uses QString (KepubBookReader::pageStyleCss returns QString and
 # writingDirectionFromString takes QString const&), so link Qt5Core. NickelHook.mk turns

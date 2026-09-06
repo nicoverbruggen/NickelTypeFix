@@ -439,6 +439,20 @@ Fixes 3, 4, and 5 target functions with no exported symbol, so they can't use `n
 
 A fix's edits are all located and verified before *any* is written (both-or-nothing). Anything unexpected (pattern not found, more than one match, or wrong bytes) makes that fix log and leave the library untouched. If a write fails, every changed site is rolled back and verified; an unverifiable rollback invokes the firmware's normal reboot command while NickelHook's boot failsafe is still armed, with the kernel reboot syscall as a fallback.
 
+## Function detour installation
+
+The shaper, `QTextEngine::fontEngine`, and `FrameView::scheduleRelayout` use the shared installer in `src/detour.cc`. The first two resolve exported symbols; the third uses the checked WebKit prologue anchor. These replace the function entry itself, so calls within a library also pass through the mod. The shaper and font-engine detours can therefore affect Qt UI text as well as book text.
+
+The installer reads `/proc/self/maps` to validate the actual mapping and permissions before reading the prologue. It requires readable, executable, non-writable code, word alignment, and a complete target page range within one mapping. It copies whole Thumb instructions until at least eight bytes are covered. The existing instruction guard rejects recognized PC-relative loads and branches; it does not decode every possible Thumb instruction. Unsupported firmware prologues still need review.
+
+The trampoline is allocated writable without execute permission. It contains the displaced instructions, a NOP when needed to align the literal load, and an absolute Thumb jump back to the first undisplaced instruction. Its bytes are checked and its permissions become read-only and executable before the target can reach it. The installer rechecks the original entry, temporarily makes its pages writable while preserving execute permission, writes the two aligned words of the jump, verifies them, and restores the original permissions.
+
+A failure after changing the entry restores the saved instructions and verifies both bytes and permissions before clearing the original-function pointer and releasing the trampoline. If recovery cannot be verified, the shared byte-patch failure handler requests a reboot before NickelHook can disarm its boot failsafe. A successful trampoline remains mapped for the process lifetime.
+
+This runs only inside `ntf_init`. The two word stores do not make the eight-byte jump atomic, and the installer does not stop other threads. No thread may execute the target while it is being replaced. Mapping checks also assume another patcher does not concurrently unmap or change the target. Keeping unrelated code on the page executable does not remove those requirements.
+
+`test/detour/check.sh` exercises mapping boundaries, instruction boundaries, repeated installation, permission restoration, and injected write and recovery failures on Linux. When compiled for ARM, it also executes a synthetic Thumb function through the replacement and through its original trampoline. This does not prove startup timing or instruction compatibility on every device.
+
 ## Firmware tolerance & safety
 
 - The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.

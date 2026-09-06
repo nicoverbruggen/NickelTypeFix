@@ -72,6 +72,7 @@
 #include <QFile>
 #include "config.h"
 #include "shape_cache.h"
+#include "detour.h"
 #include "small_caps.h"
 #include "font_dropdown.h"
 #include "line_spacing_values.h"
@@ -1829,11 +1830,28 @@ void _ntf_cwv_setViewportSize(void *self, QSize size) {
 
 
 
+extern "C" void ntf_patch_unsafe(const char *reason)
+{
+    // NickelHook's rename-back worker is not created until
+    // ntf_init returns. Reboot instead of returning an error so
+    // the .failsafe name remains in place for the next boot;
+    // do not run destructors against an unknown code page. A plain
+    // process exit is not sufficient because Nickel is not
+    // guaranteed to be supervised and restarted on every firmware.
+    NTF_LOG("CRITICAL: %s; rebooting before the boot failsafe is disarmed.", reason);
+    nh_dump_log();
+    sync();
+    execl("/sbin/reboot", "reboot", (char *)NULL);
+    NTF_LOG("CRITICAL: firmware reboot command failed: %s; trying the kernel reboot syscall.", strerror(errno));
+    if (reboot(RB_AUTOBOOT) != 0)
+        NTF_LOG("CRITICAL: kernel reboot failed: %s; terminating the unsafe Nickel process.", strerror(errno));
+    _exit(1);
+}
+
 static int ntf_init() {
     // NickelHook calls this during plugin loading, before a book is opened. It
     // resolves optional hooks, validates runtime-dependent values, applies the
-    // in-memory patches, and returns an error only when process memory cannot be
-    // proven safe after a failed rollback.
+    // in-memory patches, and reboots if a failed rollback leaves process memory unsafe.
     // First-install detection: the config file is the one first-boot artifact we create ourselves
     // (the doc and uninstall marker ship inside KoboRoot.tgz, so they exist from the very first
     // boot). Check before priming the config, which writes the missing file.
@@ -1918,20 +1936,7 @@ static int ntf_init() {
         ntf_forceload();
         for (size_t i = 0; i < sizeof(NTF_JUSTIFY_FIXES) / sizeof(NTF_JUSTIFY_FIXES[0]); i++) {
             if (!ntf_apply_justify_fix(&NTF_JUSTIFY_FIXES[i], &ntf_patch_active[i])) {
-                // NickelHook's rename-back worker is not created until
-                // ntf_init returns. Reboot instead of returning an error so
-                // the .failsafe name remains in place for the next boot;
-                // do not run destructors against an unknown code page. A plain
-                // process exit is not sufficient because Nickel is not
-                // guaranteed to be supervised and restarted on every firmware.
-                NTF_LOG("CRITICAL: rebooting before the boot failsafe is disarmed.");
-                nh_dump_log();
-                sync();
-                execl("/sbin/reboot", "reboot", (char *)NULL);
-                NTF_LOG("CRITICAL: firmware reboot command failed: %s; trying the kernel reboot syscall.", strerror(errno));
-                if (reboot(RB_AUTOBOOT) != 0)
-                    NTF_LOG("CRITICAL: kernel reboot failed: %s; terminating the unsafe Nickel process.", strerror(errno));
-                _exit(1);
+                ntf_patch_unsafe("byte-patch recovery failed");
             }
         }
     }

@@ -52,8 +52,7 @@
 #include <stdint.h>
 
 #include "small_caps.h"
-
-extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out);
+#include "detour.h"
 
 static ntf_smallcaps_logger ntf_sc_logger = 0;
 static bool ntf_sc_active = false;

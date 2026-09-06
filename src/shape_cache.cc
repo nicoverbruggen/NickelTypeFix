@@ -40,10 +40,9 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <pthread.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 #include "shape_cache.h"
+#include "detour.h"
 #include "small_caps.h"
 
 // Qt 5.2's newer shaper does not fill in the justification class. shapeTextWithHarfbuzzNG writes
@@ -76,7 +75,6 @@ static void ntf_fill_justification(const QTextEngine *e, const QScriptItem &si,
 }
 
 static int ntf_install_cache(void *sym);
-extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out);
 
 typedef int (*ShapeFn)(const QTextEngine *, const QScriptItem &, const ushort *, int,
                        QFontEngine *, const QVector<uint> &, bool);
@@ -303,28 +301,6 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
 // Detour the shaper's prologue. Its first three instructions are position independent, so they can
 // be relocated into a trampoline and the original stays reachable through it.
 
-static const int NTF_DETOUR_BYTES = 8;
-
-static bool ntf_write_code(void *dst, const void *src, unsigned n)
-{
-    long pagesize = sysconf(_SC_PAGESIZE);
-    unsigned long lo = (unsigned long)dst & ~(unsigned long)(pagesize - 1);
-    unsigned long hi = ((unsigned long)dst + n + pagesize - 1) & ~(unsigned long)(pagesize - 1);
-    if (mprotect((void *)lo, hi - lo, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
-        return false;
-    memcpy(dst, src, n);
-    __builtin___clear_cache((char *)dst, (char *)dst + n);
-    return true;
-}
-
-// ldr.w pc, [pc, #0] ; .word target|1
-static void ntf_absolute_jump(unsigned char *out, void *target)
-{
-    out[0] = 0xdf; out[1] = 0xf8; out[2] = 0x00; out[3] = 0xf0;
-    unsigned long t = (unsigned long)target | 1UL;
-    memcpy(out + 4, &t, 4);
-}
-
 // Switch Qt to HarfBuzz NG by finding its useHarfbuzzNG flag and setting it.
 //
 // Redirecting the old shaper to the new one looks tempting, since both are exported with the same
@@ -434,93 +410,6 @@ static int ntf_install_cache(void *sym)
     // this installs at init while the boot failsafe is still armed.
     if (!sym) return -1;
     return ntf_detour_at(sym, (void *)&ntf_cache_entry, (void **)&ntf_original_shape, 0);
-}
-
-
-// A general prologue detour, exposed so probes can observe functions that libnickel does not call
-// through the PLT. WebKit emits its own lifecycle signals from inside QtWebKitWidgets, so a PLT
-// hook cannot see them; detouring the emitter can. Same mechanism the shaper cache uses: relocate
-// the first 8 bytes into a trampoline, write an absolute jump over them, and hand the trampoline
-// back so the original stays callable.
-
-// Detour an arbitrary address, relocating whole instructions.
-//
-// The 8-byte absolute jump has to land on an instruction boundary or the trampoline executes half
-// of one. Thumb-2 mixes 2- and 4-byte instructions, so decode forward until at least 8 bytes are
-// covered. Refuse anything PC-relative: those read their operand from where they sit, so moving
-// them into a trampoline silently changes what they load.
-static bool ntf_thumb_is_32bit(unsigned short hw)
-{
-    unsigned short top = hw & 0xf800;
-    return top == 0xe800 || top == 0xf000 || top == 0xf800;
-}
-
-// Conservative: any encoding that can reference PC, plus every branch.
-static bool ntf_thumb_uses_pc(const unsigned char *p, int len)
-{
-    unsigned short hw = (unsigned short)(p[0] | (p[1] << 8));
-    if (len == 2) {
-        if ((hw & 0xf800) == 0x4800) return true;            // ldr rX, [pc, #imm]
-        if ((hw & 0xf800) == 0xa000) return true;            // adr rX, label
-        if ((hw & 0xff78) == 0x4468) return true;            // add rX, pc
-        if ((hw & 0xf000) == 0xd000) return true;            // b<cond>
-        if ((hw & 0xf800) == 0xe000) return true;            // b
-        if ((hw & 0xff87) == 0x4700) return true;            // bx/blx reg
-        if ((hw & 0xf500) == 0xb100) return true;            // cbz/cbnz
-        return false;
-    }
-    unsigned short hw2 = (unsigned short)(p[2] | (p[3] << 8));
-    if (hw == 0xf8df || hw == 0xf85f) return true;           // ldr.w rX, [pc, #imm]
-    if ((hw & 0xfbff) == 0xf2af) return true;                // adr.w
-    if ((hw & 0xf800) == 0xf000 && (hw2 & 0x8000)) return true;  // b.w / bl / blx
-    return false;
-}
-
-extern "C" int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out)
-{
-    if (!addr || !replacement || !original) return -1;
-    unsigned char *fn = (unsigned char *)((unsigned long)addr & ~1UL);
-    if ((unsigned long)fn & 3UL) return -5;      // the literal load needs a 4-byte aligned target
-
-    int n = 0;
-    while (n < NTF_DETOUR_BYTES) {
-        unsigned short hw = (unsigned short)(fn[n] | (fn[n + 1] << 8));
-        int len = ntf_thumb_is_32bit(hw) ? 4 : 2;
-        if (ntf_thumb_uses_pc(fn + n, len)) return -6;
-        n += len;
-        if (n > 32) return -7;
-    }
-    if (relocated_out) *relocated_out = n;
-
-    long pagesize = sysconf(_SC_PAGESIZE);
-    unsigned char *tramp = (unsigned char *)mmap(0, pagesize, PROT_READ | PROT_WRITE | PROT_EXEC,
-                                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (tramp == MAP_FAILED) return -3;
-
-    // `ldr.w pc, [pc, #0]` reads its literal from Align(PC, 4), so the jump instruction must sit
-    // on a 4-byte boundary or the CPU rounds down and loads the wrong word. At the start of a
-    // function that is free; after relocating an odd number of halfwords it is not. Pad with a
-    // nop so the jump lands aligned, and keep jumping back to the true end of what was moved.
-    memcpy(tramp, fn, n);
-    int jump_at = n;
-    if (jump_at & 3) {
-        tramp[jump_at] = 0x00; tramp[jump_at + 1] = 0xbf;   // nop
-        jump_at += 2;
-    }
-    ntf_absolute_jump(tramp + jump_at, fn + n);
-    __builtin___clear_cache((char *)tramp, (char *)tramp + jump_at + 8);
-    *original = (void *)((unsigned long)tramp | 1UL);
-
-    unsigned char detour[NTF_DETOUR_BYTES];
-    ntf_absolute_jump(detour, replacement);
-    if (!ntf_write_code(fn, detour, NTF_DETOUR_BYTES)) {
-        // Nothing reaches the trampoline if the jump was never written, and leaving it mapped
-        // would also leave *original pointing at code the caller must not run.
-        munmap(tramp, pagesize);
-        *original = 0;
-        return -4;
-    }
-    return 0;
 }
 
 

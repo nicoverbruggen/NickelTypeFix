@@ -23,10 +23,6 @@ ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old, vo
 // the small caps post-pass has a place to run. Returns whether the detour went in.
 bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *shaper_ng);
 
-// Same, at a raw address, for code with no symbol at all. Relocates whole instructions and
-// refuses anything PC-relative. relocated_out, if given, receives how many bytes moved.
-int ntf_detour_at(void *addr, void *replacement, void **original, int *relocated_out);
-
 #ifdef __cplusplus
 }
 #endif
