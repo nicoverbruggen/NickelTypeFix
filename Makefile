@@ -37,6 +37,17 @@ endif
 endif
 override CPPFLAGS += -DNTF_DEV_BUILD=$(NTF_DEV_BUILD)
 
+# NickelHook uses VERSION for its startup log and our log prefixes. Hash the files in this
+# build directory so build.sh's source archive and a direct make invocation use the same inputs.
+ifeq ($(NTF_DEV_BUILD),1)
+NTF_SOURCE_FINGERPRINT := $(shell python3 tools/build_fingerprint.py)
+ifeq ($(NTF_SOURCE_FINGERPRINT),)
+$(error Could not fingerprint the development build inputs)
+endif
+override VERSION := $(if $(strip $(VERSION)),$(strip $(VERSION)),$(shell git describe --tags --always --dirty 2>/dev/null))
+override VERSION := $(if $(VERSION),$(VERSION)-)dev-$(NTF_SOURCE_FINGERPRINT)
+endif
+
 override SKIPCONFIGURE += strip
 strip:
 	$(STRIP) --strip-unneeded src/libnickeltypefix.so

@@ -1673,8 +1673,8 @@ static bool ntf_fast_shaping() { return ntf_global_config_bool("ntf_fast_shaping
 
 
 
-// Every development build carries the same git-describe version, so the version string cannot tell
-// two of them apart. Hash the library we are actually running from and log that instead, so a log
+// The development version identifies source contents, but compiler versions and build flags can
+// still produce different libraries. Hash the library we are actually running from, so a log
 // can be matched to a build with `md5 -q src/libnickeltypefix.so` on the host. During init the file
 // is under its .failsafe name (NickelHook renames it while the boot is unproven); the contents, and
 // therefore the hash, are the same either way.

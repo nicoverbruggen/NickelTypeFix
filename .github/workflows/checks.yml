@@ -39,6 +39,9 @@ jobs:
       - name: Check log rotation
         run: test/logging/check.sh
 
+      - name: Check build versions
+        run: test/build-version/check.sh
+
       - name: Check firmware compatibility
         run: nickelbench check-source src
 

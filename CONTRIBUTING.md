@@ -14,7 +14,11 @@ cd NickelTypeFix
 
 This produces `KoboRoot.tgz` at the repo root. `./build.sh <targets>` passes other make targets through; `NICKELTC_IMAGE` overrides the container image. You can also build straight on the host with `make CROSS_COMPILE=/path/to/nickeltc/bin/arm-nickel-linux-gnueabihf- all koboroot`.
 
-Version stamping: NickelHook.mk bakes `git describe --tags --always --dirty` into `NH_VERSION`: the git tag when you're on one, otherwise a commit hash. `build.sh` keeps `.git` out of what it sends the container, so it reads the version on the host and passes it to make. A local build is stamped like a CI one, with `-dirty` when the tree has uncommitted changes. Outside a checkout there is no version and the logger falls back to `dev`. CI (checkout with `fetch-depth: 0`) produces the authoritative artifacts.
+Version stamping: NickelHook.mk bakes `git describe --tags --always --dirty` into `NH_VERSION`: the git tag when you're on one, otherwise a commit hash. `build.sh` keeps `.git` out of what it sends the container, so it reads the version on the host and passes it to make. A local build is stamped like a CI one, with `-dirty` when the tree has uncommitted changes. Outside a checkout there is no release version and the logger falls back to `dev`. CI (checkout with `fetch-depth: 0`) produces the authoritative artifacts.
+
+Development builds append `-dev-<fingerprint>` to that version, or use `dev-<fingerprint>` outside a checkout. The 12-digit fingerprint identifies the contents and paths of the build scripts, mod sources and headers, NickelHook sources and headers, and packaged resources. It appears in NickelHook's startup log and every mod log line, so successive uncommitted edits remain distinguishable after the startup log rotates out. It does not identify compiler versions or custom build flags; the startup binary MD5 still identifies the exact library. Computing it requires Python 3. Direct make users must run `make clean` before changing the version, build mode, or compiler flags; `build.sh` does this by default.
+
+Run `test/build-version/check.sh` in the build container to check fingerprint inputs and release, development, and source-archive version stamping. CI runs the same check.
 
 ### Development probes
 

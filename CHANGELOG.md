@@ -4,6 +4,7 @@
 
 ### Added
 
+- Development builds include a source fingerprint in their version and log lines, distinguishing them from release builds and earlier uncommitted edits.
 - Long chapters open several times faster. The reader now uses Qt's newer text shaper and remembers text it has already shaped.
 - Long chapters open faster again. WebKit used to lay a chapter out twice and throw the first one away; that pass is now skipped.
 - The reader can expose 24 line-spacing choices instead of the stock 15, running from 0.80 to 1.50.

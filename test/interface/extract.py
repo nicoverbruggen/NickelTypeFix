@@ -67,7 +67,7 @@ text = blob[ro["off"]:ro["off"] + ro["size"]] if ro else b""
 # differ on every commit and say nothing about the code, so blank the version out first.
 # Normalise before measuring length: the stamp is not a fixed width, and a literal near the
 # threshold below would otherwise drop in or out of the digest as the version grew.
-VERSION = re.compile(r"v\d+\.\d+(?:\.\d+)?(?:-\d+-g[0-9a-f]{6,})?(?:-dirty)?|\bdev\b")
+VERSION = re.compile(r"v\d+\.\d+(?:\.\d+)?(?:-\d+-g[0-9a-f]{6,})?(?:-dirty)?(?:-dev-[0-9a-f]{12})?|\bdev(?:-[0-9a-f]{12})?\b")
 strs = [VERSION.sub("<version>", s.decode("latin-1"))
         for s in re.findall(rb"[\x20-\x7e]{4,}", text)]
 out.append("")
