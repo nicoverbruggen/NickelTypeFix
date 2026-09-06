@@ -11,17 +11,12 @@
 - Development builds include a source fingerprint in their version and log lines, distinguishing them from release builds and earlier uncommitted edits.
 - Long chapters open several times faster. The reader now uses Qt's newer text shaper and remembers text it has already shaped.
 - Long chapters open faster again. WebKit used to lay a chapter out twice and throw the first one away; that pass is now skipped.
-- The reader can expose 24 line-spacing choices instead of the stock 15, running from 0.80 to 1.50.
+- Opt-in: set `ntf_more_spacing:1` to use 24 line-spacing choices instead of the stock 15, running from 0.80 to 1.50. Disabled by default.
 - Small caps in a book now use the reading font's own small cap glyphs when it has them, with the font's kerning, instead of capitals shrunk to 70%. Needs `optimizeLegibility`; fonts without small caps are unchanged.
 
 ### Fixed
 
 - The log rotates during a running session before a write would exceed 256 KiB, instead of growing until the next restart.
-- Small caps keep working after more than 32 font faces have been encountered. The font-table cache now replaces its least recently used entries.
-- Small caps use the font's small-cap glyphs when fast shaping is disabled, instead of full-size capitals.
-- Startup no longer warns that the mid-parse layout fix failed before attempting to install it.
-- Function detours now validate mapped code ranges, restore code-page permissions, protect their trampolines, and recover from failed installation before startup can continue.
-- The selected font preview no longer flashes or stays in a fallback font after a font change with fast shaping enabled.
 - Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.
 - Fixed an integer overflow in the capital-spacing fix's font-table bounds check.
 - The reader-font quoting fix now skips `font-family:` text that sits outside a CSS declaration instead of quoting across rule boundaries.
