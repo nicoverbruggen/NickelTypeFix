@@ -23,7 +23,7 @@
 - Function detours now validate mapped code ranges, restore code-page permissions, protect their trampolines, and recover from failed installation before startup can continue.
 - The selected font preview no longer flashes or stays in a fallback font after a font change with fast shaping enabled.
 - Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.
-- A malformed font file can no longer make the capital-spacing fix read or write outside the font while inspecting it.
+- Fixed an integer overflow in the capital-spacing fix's font-table bounds check.
 - The reader-font quoting fix now skips `font-family:` text that sits outside a CSS declaration instead of quoting across rule boundaries.
 
 ## v0.8
