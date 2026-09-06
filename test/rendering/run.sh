@@ -31,6 +31,9 @@ compile_qt "$repo/test/font-dropdown/font_dropdown_test.cc" "$repo/src/font_drop
 compile_qt "$repo/test/rendering/shaping_test.cc" "$repo/src/detour.cc" \
     -o "$work/shaping"
 "$cxx" -std=c++11 -mthumb -Wall -Wextra -Werror "$repo/test/detour/detour_test.cc" -o "$work/detour"
+printf '%s\n' 'void nh_log(const char *fmt, ...);' > "$work/NickelHook.h"
+"$cc" -std=gnu11 -mthumb -Wall -Wextra -Werror -pthread -I"$work" \
+    "-DNTF_CONFIG_DIR=\"$work/log\"" "$repo/test/logging/log_test.c" -o "$work/logging"
 
 mkdir "$work/empty-fonts" "$work/runtime"
 export QT_QPA_PLATFORM=offscreen QT_QPA_FONTDIR="$work/empty-fonts"
@@ -42,6 +45,7 @@ run_arm() {
         --library-path "$root/lib/arm-linux-gnueabihf:$qt/usr/lib:$qt/lib" "$@"
 }
 run_arm "$work/detour"
+run_arm "$work/logging"
 for shaper in ng old; do
     export QT_HARFBUZZ="$shaper"
     run_arm "$work/font-dropdown" "$fonts/Vollkorn-Regular.ttf" "$fonts/NotoSans-Regular.ttf"

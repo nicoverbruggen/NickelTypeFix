@@ -28,6 +28,10 @@ Run `test/detour/check.sh` on Linux, including inside the build container. It ch
 
 Run `test/rendering/check.sh` with Podman or Docker. CI uses the same command. It builds the tests against pinned ARM Qt 5.2.1 and runs both shapers under QEMU, checking the dropdown preview, cache replay, small-caps rendering, and detour installation. The image fetches checksummed public dependencies on its first build; test execution needs no network or device files. See [coverage and runtime details](test/rendering/README.md).
 
+## Log rotation tests
+
+Run `test/logging/check.sh` with a C compiler. CI runs it in the build container and as an ARM binary in the rendering container. It checks rotation within one session, exact size boundaries, buffered-message order, failed rotation and recovery, concurrent writers, and logging after uninstall. An oversized log left by an older build is preserved in `.old` on its first rotation; subsequent generations stay within the limit.
+
 ## Testing on a device
 
 The container uses the toolchain's FreeType backend. Device tests still need to confirm Nickel's hook routing, font reload sequence, iType rendering, and actual reader behavior.
@@ -40,7 +44,7 @@ Boot safety / recovery: NickelHook's failsafe (`failsafe_delay = 3`) uninstalls 
 
 ## Logs & debugging
 
-The mod logs to `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log` (and to syslog via `nh_log`, viewable with `logread`). Every message carries the mod version. A healthy boot writes the firmware and a compact list showing whether each feature is enabled and active. Active means the feature found every hook or byte patch it needs at startup; it does not mean the feature has already encountered matching book content. Set `ntf_log:1` to include every config value, resolved symbols, and per-fix tracing. Problems always log, and a malformed config turns verbose logging on automatically so mistakes self-diagnose. The log is size-capped at 256 KB and rotates once to `nickel-type-fix.log.old`.
+The mod logs to `KOBOeReader/.adds/nickel-type-fix/nickel-type-fix.log` (and to syslog via `nh_log`, viewable with `logread`). Every message carries the mod version. A healthy boot writes the firmware and a compact list showing whether each feature is enabled and active. Active means the feature found every hook or byte patch it needs at startup; it does not mean the feature has already encountered matching book content. Set `ntf_log:1` to include every config value, resolved symbols, and per-fix tracing. Problems always log, and a malformed config turns verbose logging on automatically so mistakes self-diagnose. Before a write would exceed 256 KiB, the log rotates to `nickel-type-fix.log.old`, replacing the previous backup. Rotation runs throughout the session. If it fails, that block is omitted from the file while syslog still receives its messages.
 
 ## Firmware compatibility
 

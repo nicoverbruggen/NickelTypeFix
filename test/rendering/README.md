@@ -13,6 +13,7 @@ CI runs the same command in its `ARM rendering regressions` job. It builds a loc
 | Path | What fails the job |
 | --- | --- |
 | ARM detour installer | Incorrect relocated instructions, page permissions, or recovery behavior, including actual calls through the replacement and trampoline. |
+| Log rotation | Exceeding the size limit during one session, reordered buffered messages, growth after failed rotation, interleaved writes, or recreating the folder after uninstall. |
 | Selected font dropdown | Persistent fallback after font reload, a fallback frame during selection, or a repair that affects the wrong label or outlives its widget. Runs twice with each shaper. |
 | Shaping cache | Differences between uncached, first cached, and replayed glyphs, positions, cluster mappings, justification attributes, font sizes, line metrics, or pixels. The test counts calls through the original trampoline to prove that replay occurred. |
 | Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, combining marks, Arabic direction, or the 96-character recording boundary. |

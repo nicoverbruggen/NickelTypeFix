@@ -5,6 +5,7 @@ extern "C" {
 #endif
 
 #include <ctype.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -21,9 +22,8 @@ extern "C" {
 #define NH_VERSION "dev"
 #endif
 
-// Cap the on-device log so it can't grow without bound across many boots. On the first write of
-// a boot, if the log is larger than this it's rotated to a single ".old" generation. A healthy
-// boot writes nothing, so this is reached only by a long-lived or verbose device.
+// Rotate before an appended block would exceed this size, keeping one ".old" generation.
+// Check once per buffered write, not once per diagnostic line.
 #ifndef NTF_LOG_MAX_BYTES
 #define NTF_LOG_MAX_BYTES (256 * 1024)
 #endif
@@ -72,22 +72,31 @@ __attribute__((unused)) static inline void ntf_log_write_block(const char *block
     if (!block || !len)
         return;
 
-    // First file write of the boot: create the directory if it's missing, and rotate the log if
-    // it grew past the cap. A benign race if two threads hit this first (at most a redundant
-    // mkdir or rename); the flag keeps it to one check per process. Doing the mkdir here rather
-    // than on every line also means a log call after ntf_uninstall can't recreate the folder.
+    // Create the directory only on the first write. Later calls, including a flush after
+    // uninstall, must not recreate it. The caller's mutex also serializes rotation and writes.
+    const bool first_write = !ntf_log_setup_done;
     if (!ntf_log_setup_done) {
         ntf_log_setup_done = true;
         mkdir(NTF_CONFIG_DIR, 0755);
-        struct stat st;
-        if (stat(NTF_CONFIG_DIR "/nickel-type-fix.log", &st) == 0) {
-            if (st.st_size > NTF_LOG_MAX_BYTES) {
-                if (rename(NTF_CONFIG_DIR "/nickel-type-fix.log", NTF_CONFIG_DIR "/nickel-type-fix.log.old") != 0)
-                    ntf_log_prepend_newline = true;
-            } else {
-                ntf_log_prepend_newline = st.st_size > 0;
+    }
+
+    // Normal blocks are at most 32 KiB. Never exceed the cap even with inconsistent build-time
+    // limits; every message has already gone to syslog before reaching this file sink.
+    if (len > NTF_LOG_MAX_BYTES) return;
+    struct stat st;
+    if (stat(NTF_CONFIG_DIR "/nickel-type-fix.log", &st) == 0) {
+        if (first_write) ntf_log_prepend_newline = st.st_size > 0;
+        const size_t incoming = len + (ntf_log_prepend_newline ? 1u : 0u);
+        if (st.st_size >= NTF_LOG_MAX_BYTES || incoming > NTF_LOG_MAX_BYTES - (size_t)st.st_size) {
+            if (rename(NTF_CONFIG_DIR "/nickel-type-fix.log", NTF_CONFIG_DIR "/nickel-type-fix.log.old") != 0) {
+                nh_log("log rotation failed: %s", strerror(errno));
+                return;
             }
+            ntf_log_prepend_newline = false;
         }
+    } else {
+        if (errno != ENOENT) return; // Cannot establish the file size; keep the syslog copy.
+        ntf_log_prepend_newline = false;
     }
 
     FILE *f = fopen(NTF_CONFIG_DIR "/nickel-type-fix.log", "a");

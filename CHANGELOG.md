@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- The log rotates during a running session before a write would exceed 256 KiB, instead of growing until the next restart.
 - Small caps keep working after more than 32 font faces have been encountered. The font-table cache now replaces its least recently used entries.
 - Small caps use the font's small-cap glyphs when fast shaping is disabled, instead of full-size capitals.
 - Startup no longer warns that the mid-parse layout fix failed before attempting to install it.
