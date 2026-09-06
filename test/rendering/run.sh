@@ -28,7 +28,7 @@ compile_qt() {
 }
 compile_qt "$repo/test/font-dropdown/font_dropdown_test.cc" "$repo/src/font_dropdown.cc" \
     -o "$work/font-dropdown"
-compile_qt "$repo/test/rendering/shaping_test.cc" "$repo/src/small_caps.cc" "$repo/src/detour.cc" \
+compile_qt "$repo/test/rendering/shaping_test.cc" "$repo/src/detour.cc" \
     -o "$work/shaping"
 "$cxx" -std=c++11 -mthumb -Wall -Wextra -Werror "$repo/test/detour/detour_test.cc" -o "$work/detour"
 
@@ -46,17 +46,5 @@ for shaper in ng old; do
     export QT_HARFBUZZ="$shaper"
     run_arm "$work/font-dropdown" "$fonts/Vollkorn-Regular.ttf" "$fonts/NotoSans-Regular.ttf"
     run_arm "$work/shaping" "$fonts" cache
-    if [ "$shaper" = old ]; then
-        # Keep the legacy small-caps bug visible without calling it a passing test. The
-        # exception is strict: another failure, a crash, or an unexpected pass fails CI.
-        result=0
-        run_arm "$work/shaping" "$fonts" small-caps || result=$?
-        if [ "$result" -ne 42 ]; then
-            echo "Unexpected legacy small-caps result $result; review the known-failure exception." >&2
-            exit 1
-        fi
-        echo 'XFAIL: legacy small caps retains uppercase glyph IDs; see test/rendering/README.md'
-    else
-        run_arm "$work/shaping" "$fonts" small-caps
-    fi
+    run_arm "$work/shaping" "$fonts" small-caps
 done

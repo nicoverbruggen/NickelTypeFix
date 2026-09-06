@@ -18,17 +18,15 @@ CI runs the same command in its `ARM rendering regressions` job. It builds a loc
 | Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, combining marks, Arabic direction, or the 96-character recording boundary. |
 | Small caps | Wrong small-cap glyph IDs, an unexpanded `ffi` ligature, a scaled font engine, changed line metrics, changed ordinary text or a font without `smcp`, or a cache replay that changes the result. |
 
-The Qt tests run once with old HarfBuzz and once with HarfBuzz NG. The shaping test installs the production shaper and font-engine detours on the runtime's actual Qt functions. It includes the production cache source so it can disable recording for reference renders and count calls through the original trampoline, without adding diagnostics to the shipped mod. The small-caps glyph expectation comes from names in the pinned Vollkorn font's `post` table, independently of the mod's GSUB parser.
+The Qt tests run once with old HarfBuzz and once with HarfBuzz NG. The shaping test installs the production shaper and font-engine detours on the runtime's actual Qt functions. It includes the production cache and small-caps sources so it can disable recording, count calls through the original trampoline, and check mapping buffers directly, without adding diagnostics to the shipped mod. The small-caps glyph expectation comes from names in the pinned Vollkorn font's `post` table, independently of the mod's GSUB parser.
 
 The existing CI jobs also check page-boundary geometry, line-spacing values, the built interface, symbol compatibility, and firmware instruction anchors.
 
-## Known failure: legacy small caps
+## Legacy small caps regression
 
-This suite exposed a production bug when small caps runs through old HarfBuzz. Qt has already mapped the uppercase text to glyph IDs. Its legacy shaper reuses that buffer for a multi-font engine, so passing lowercase text does not select the lowercase glyphs needed by the mod's `smcp` map. The result retains capital glyph IDs even though the font-engine detour supplies a full-size engine. The NG path passes the small-caps glyph checks.
+This suite exposed a production bug when small caps ran through old HarfBuzz. Qt had already mapped the uppercase text to glyph IDs. Its legacy shaper reused that buffer for a multi-font engine, so passing lowercase text did not select the lowercase glyphs needed by the mod's `smcp` map. The result retained capital glyph IDs even though the font-engine detour supplied a full-size engine.
 
-The legacy small-caps test reports `XFAIL` with exit code 42 only when it sees that exact glyph mismatch and its other checks pass. CI accepts this one known failure explicitly. A different failure, crash, timeout, or unexpected success fails the job. Once the production bug is fixed, remove the special exit and the exception in `run.sh`; do not replace the expected small-cap glyphs with the incorrect capitals.
-
-This exception does not apply to the legacy dropdown or cache tests, which must pass. The production bug is left for a separate fix because this item changes CI and tests without requiring a new device build.
+The fix remaps the primary font's glyph IDs before shaping. Both shapers must produce the expected small-cap glyphs. A separate check verifies that remapping preserves fallback glyph IDs and keeps the prepared buffer unchanged if it is too small. There are no expected-failure exceptions.
 
 ## Runtime and fixtures
 

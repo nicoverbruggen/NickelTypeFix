@@ -1,6 +1,7 @@
-// Include the production cache so the test can count calls through its original trampoline
-// and switch recording off for the reference run. No test counters enter the shipped mod.
+// Include production sources to count shaper calls, disable cache recording, and check the
+// small-caps mapping buffer directly. No test counters enter the shipped mod.
 #include "../../src/shape_cache.cc"
+#include "../../src/small_caps.cc"
 #include "qt_runtime.h"
 #include <QtWidgets/QApplication>
 #include <QtGui/QFontDatabase>
@@ -8,6 +9,7 @@
 #include <QtGui/QImage>
 #include <QtGui/QPainter>
 #include <QtGui/QTextLayout>
+#include <QtGui/private/qrawfont_p.h>
 #include <vector>
 
 static void check(bool condition, const char *message)
@@ -153,8 +155,41 @@ static QVector<quint32> glyphs(const Snapshot &snapshot)
     return result;
 }
 
-static int small_caps_use_font_glyphs(bool ng)
+static void primary_mapping_preserves_fallbacks()
 {
+    const QRawFont raw = QRawFont::fromFont(font("Vollkorn"));
+    check(raw.isValid(), "primary mapping fixture did not load");
+    QFontEngine *primary = QRawFontPrivate::get(raw)->fontEngine;
+    const QString text = QStringLiteral("ofe");
+    const QVector<quint32> expected = raw.glyphIndexesForString(text);
+    QByteArray storage(QGlyphLayout::spaceNeededForGlyphLayout(4), 0);
+    QGlyphLayout prepared(storage.data(), 4);
+    // Qt has prepared capitals, with the middle glyph assigned to another font.
+    prepared.glyphs[0] = 138;
+    prepared.glyphs[1] = 0x0100004b;
+    prepared.glyphs[2] = 48;
+    prepared.glyphs[3] = 0x12345678;
+    const QByteArray before(storage.constData(), storage.size());
+    prepared.numGlyphs = 2;
+    check(!ntf_sc_map_primary(prepared, text.utf16(), text.size(), primary), "short glyph buffer accepted");
+    check(storage == before, "failed mapping changed Qt's prepared buffer");
+    prepared.numGlyphs = 4;
+    check(ntf_sc_map_primary(prepared, text.utf16(), text.size(), primary), "primary mapping failed");
+    check(prepared.glyphs[0] == expected[0] && prepared.glyphs[2] == expected[2],
+          "primary glyphs were not mapped from lowercase text");
+    check(prepared.glyphs[1] == 0x0100004b && prepared.glyphs[3] == 0x12345678,
+          "primary mapping changed a fallback glyph or the buffer tail");
+    const QString missing(QChar(0x0180));
+    check(!raw.supportsCharacter(uint(0x0180)), "missing-letter fixture changed");
+    const glyph_t previous = prepared.glyphs[0];
+    check(ntf_sc_map_primary(prepared, missing.utf16(), 1, primary), "missing-letter mapping failed");
+    check(prepared.glyphs[0] == previous, "missing lowercase replaced an existing glyph with .notdef");
+    qDebug("PASS: primary mapping preserves fallback IDs, missing letters, and short buffers");
+}
+
+static int small_caps_use_font_glyphs()
+{
+    primary_mapping_preserves_fallbacks();
     QFont supported = font("Vollkorn"); supported.setCapitalization(QFont::SmallCaps);
     QFont unsupported = font("DejaVu Sans"); unsupported.setCapitalization(QFont::SmallCaps);
     const QString text = QStringLiteral("office");
@@ -186,15 +221,7 @@ static int small_caps_use_font_glyphs(bool ng)
     unsigned before = shapeCalls;
     check(render(text, supported) == reference, "small caps cache replay changed rendering");
     check(shapeCalls == before, "small caps replay called the original shaper");
-    if (glyphs(actual) != expected) {
-        // Known production bug: old HarfBuzz reuses Qt's uppercase glyph buffer for a
-        // multi-font engine. Match that exact failure; any other mismatch is an error.
-        if (!ng && glyphs(actual) == glyphs(oldSupported)) {
-            qWarning("KNOWN FAILURE: old HarfBuzz retains uppercase glyph IDs for small caps");
-            return 42;
-        }
-        qFatal("FAIL: small caps did not use the expected font glyphs or expand ffi");
-    }
+    check(glyphs(actual) == expected, "small caps did not use the expected font glyphs or expand ffi");
     qDebug("PASS: small-caps glyphs, ligature expansion, full-size engine, metrics, and cache replay");
     return 0;
 }
@@ -221,5 +248,5 @@ int main(int argc, char **argv)
         return 0;
     }
     check(strcmp(argv[2], "small-caps") == 0, "unknown shaping test");
-    return small_caps_use_font_glyphs(ng);
+    return small_caps_use_font_glyphs();
 }

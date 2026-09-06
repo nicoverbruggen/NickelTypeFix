@@ -45,6 +45,7 @@
 #include <QtCore/QVector>
 
 #include <cstdarg>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -489,6 +490,29 @@ static QFontEngine *ntf_font_engine_entry(const QTextEngine *e, const QScriptIte
 
 // ---- seam 2: the shaping post-pass -------------------------------------------------------------
 
+// Old HarfBuzz consumes the glyph IDs shapeText mapped from its uppercase copy. Passing
+// lowercase text alone does not remap them. Replace primary-font IDs with their lowercase
+// equivalents, keeping Qt's fallback glyphs and font boundaries intact. A letter missing from
+// the primary font keeps its existing glyph. Map into temporary storage so failure changes nothing.
+static bool ntf_sc_map_primary(QGlyphLayout &target, const unsigned short *text, int length,
+                                QFontEngine *primary)
+{
+    const int bytesPerGlyph = QGlyphLayout::spaceNeededForGlyphLayout(1);
+    if (length <= 0 || length > INT_MAX / bytesPerGlyph) return false;
+    QByteArray storage(QGlyphLayout::spaceNeededForGlyphLayout(length), 0);
+    QGlyphLayout mapped(storage.data(), length);
+    int count = length;
+    if (!primary->stringToCMap(reinterpret_cast<const QChar *>(text), length, &mapped, &count,
+                               QFontEngine::GlyphIndicesOnly)) return false;
+    if (count <= 0 || count > length || count > target.numGlyphs) return false;
+
+    for (int i = 0; i < count; ++i) {
+        if (!(target.glyphs[i] >> 24) && mapped.glyphs[i])
+            target.glyphs[i] = mapped.glyphs[i];
+    }
+    return true;
+}
+
 static const NtfScLigature *ntf_sc_find_ligature(const NtfScFont *f, uint16_t glyph)
 {
     for (int i = 0; i < f->ligatures.size(); ++i)
@@ -568,6 +592,10 @@ int ntf_smallcaps_shape(const QTextEngine *e, const QScriptItem &si, const unsig
     if (si.position < 0 || si.position + itemLength > text.length()) return -1;
     const unsigned short *lower = reinterpret_cast<const unsigned short *>(text.constData()) + si.position;
 
+    if (fontEngine->type() == QFontEngine::Multi) {
+        QGlyphLayout initial = e->availableGlyphs(&si);
+        if (!ntf_sc_map_primary(initial, lower, itemLength, ntf_sc_primary(fontEngine))) return -1;
+    }
     const int n0 = original(e, si, lower, itemLength, fontEngine, itemBoundaries, kerningEnabled);
     if (n0 <= 0) return n0;
 
