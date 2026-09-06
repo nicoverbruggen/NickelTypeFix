@@ -1,6 +1,7 @@
 [exported hook bodies]
 _ntf_FT_Load_Glyph
 _ntf_addApplicationFont
+_ntf_adjustFontFamily
 _ntf_cwv_setViewportSize
 _ntf_cwv_setWritingDirection
 _ntf_kbrb_loadFinished
@@ -13,6 +14,7 @@ _ntf_qwf_render
 _ntf_qwp_setViewportSize
 _ntf_qws_setAttribute
 _ntf_qws_setFontFamily
+_ntf_setText
 _ntf_wk_scheduleRelayout
 _ntf_wv_addCssToHtml
 _ntf_wv_locatePages
@@ -39,6 +41,8 @@ _ZN15KepubBookReaderC1EP11PluginStateP7QWidget
 _ZN15KepubBookReaderD1Ev
 _ZN19KepubBookReaderBase12loadFinishedEb
 _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
+_ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
+_ZN6QLabel7setTextERK7QString
 _ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb
 _ZN9QWebFrame6renderEP8QPainterRK7QRegion
 _ZNK10WebkitView10totalPagesEv
@@ -101,5 +105,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  307
-sha256 5219edfd7e47e28bfe6ee6179d2c5e019e3cb0174796745b5e18a381c217c437
+count  314
+sha256 0318bf2d5d968dd6610bc3c28458429ce064b9e00584bb9e65792c532e82b99f

@@ -22,6 +22,8 @@ Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD
 
 ## Testing on a device
 
+The [font dropdown regression](test/font-dropdown/README.md) reproduces the NG fallback and tests the label repair under ARM Qt 5.2.1. It needs a separate runtime setup and is not part of CI. Device testing must still confirm Nickel's font reload hook and the actual preview.
+
 1. Copy `KoboRoot.tgz` into the Kobo's hidden `.kobo` folder over USB.
 2. Eject and reboot; the firmware installs it and deletes the tgz.
 3. The mod's folder is `KOBOeReader/.adds/nickel-type-fix/` (`doc`, `uninstall`, `config`, and once it logs, `nickel-type-fix.log`). The config is generated from an in-code table rather than a shipped `default` file, so keys added by a later version are appended to an existing config on the next boot.

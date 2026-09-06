@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- The selected font preview no longer flashes or stays in a fallback font after a font change with fast shaping enabled.
 - Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.
 - A malformed font file can no longer make the capital-spacing fix read or write outside the font while inspecting it.
 - The reader-font quoting fix now skips `font-family:` text that sits outside a CSS declaration instead of quoting across rule boundaries.

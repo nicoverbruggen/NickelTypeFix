@@ -73,6 +73,7 @@
 #include "config.h"
 #include "shape_cache.h"
 #include "small_caps.h"
+#include "font_dropdown.h"
 #include "line_spacing_values.h"
 #include "pagecut_geometry.h"
 #include "util.h"
@@ -1659,6 +1660,8 @@ static void *ntf_qte_shapeText;
 static void *ntf_qte_shaperOld;
 static void *ntf_qte_shaperNG;
 static void *ntf_qte_fontEngine;
+static void (*real_adjustFontFamily)(void *, const QString &) = nullptr;
+static void (*real_labelSetText)(QLabel *, const QString &) = nullptr;
 
 // FIX 12: what ntf_shape_cache_enable() managed to attach, for the startup table.
 static ntf_shape_status_t ntf_shape_status = { false, false };
@@ -1938,13 +1941,18 @@ static int ntf_init() {
     ntf_crumb("byte patches done");
     if (ntf_fast_shaping()) {
         ntf_crumb("enabling fast shaping (fix 12)");
+        // NG changes rich-text itemization across the process. Do not enable it unless we
+        // can rebuild the selected font label after Nickel's remove/reload sequence.
+        const bool dropdown_hooks = real_adjustFontFamily && real_labelSetText;
+        if (!dropdown_hooks)
+            NTF_LOG("Note: fast shaping keeps the stock shaper because the font dropdown repair hook is unavailable.");
         ntf_shape_status = ntf_shape_cache_enable(ntf_qte_shapeText, ntf_qte_shaperOld,
-                                                  ntf_qte_shaperNG);
+                                                  dropdown_hooks ? ntf_qte_shaperNG : nullptr);
         NTF_DBG("startup: fast shaping ng=%d cache=%d",
             ntf_shape_status.ng_enabled, ntf_shape_status.cache_installed);
-        if (!ntf_shape_status.ng_enabled)
+        if (!ntf_shape_status.ng_enabled && dropdown_hooks)
             NTF_LOG("Note: the fast-shaping fix could not find Qt's shaper selector on this firmware, so it is sitting out (other fixes are unaffected).");
-        else if (!ntf_shape_status.cache_installed)
+        else if (ntf_shape_status.ng_enabled && !ntf_shape_status.cache_installed)
             NTF_LOG("Note: the fast-shaping fix switched to the newer shaper but could not install its cache, so chapters open faster but not as fast as they could.");
     }
 
@@ -2092,6 +2100,32 @@ int _ntf_addApplicationFont(const QString *fileName) {
     } catch (...) {
         NTF_LOG("Note: the capital-spacing fix skipped one font after an internal error (likely low memory).");
         return real_addApplicationFont(fileName);
+    }
+}
+
+// FIX 12: Nickel sets the selected label through this Qt import before menu cleanup.
+// The controller's fontFamilyChanged slot can bypass its PLT entry, so hook the text here.
+extern "C" __attribute__((visibility("default")))
+void _ntf_setText(QLabel *label, const QString &text) {
+    if (!ntf_enabled() || !ntf_shape_status.ng_enabled) {
+        real_labelSetText(label, text);
+        return;
+    }
+    const int held = ntf_set_font_dropdown_text(label, text, real_labelSetText);
+    if (held < 0)
+        NTF_LOG("Note: the font dropdown could not retain its preview during font reload.");
+}
+
+// FIX 12: adjustFontFamily synchronously reloads the chosen font after menu-row cleanup.
+// Rebuild only that dropdown label once the call returns, while its font is available again.
+extern "C" __attribute__((visibility("default")))
+void _ntf_adjustFontFamily(void *self, const QString &family) {
+    real_adjustFontFamily(self, family);
+    if (!ntf_enabled() || !ntf_shape_status.ng_enabled) return;
+    try {
+        ntf_refresh_font_dropdown(family);
+    } catch (...) {
+        NTF_LOG("Note: the font dropdown repair skipped an update after an internal error.");
     }
 }
 
@@ -3269,6 +3303,12 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
     //nb hook libnickel 4.23.15505 * _ZN13QFontDatabase18addApplicationFontERK7QString
+    { .sym = "_ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString", .sym_new = "_ntf_adjustFontFamily",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_adjustFontFamily), .desc = "fix 12: refresh the font preview after font reload", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
+    { .sym = "_ZN6QLabel7setTextERK7QString", .sym_new = "_ntf_setText",
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_labelSetText), .desc = "fix 12: retain the font preview during reload", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN6QLabel7setTextERK7QString
     // FIX 9 — page-boundary clipping. Both optional; a missing symbol sits the fix out.
     // locatePages brackets each pagination pass, which is the only place the reader's own view can
     // be identified; sortRectsByStart is a static function (no `this`) carrying the line rects the

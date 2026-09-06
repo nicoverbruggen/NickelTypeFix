@@ -1,14 +1,14 @@
 include NickelHook/NickelHook.mk
 
 override LIBRARY  := src/libnickeltypefix.so
-override SOURCES  += src/config.c src/nickeltypefix.cc src/shape_cache.cc src/small_caps.cc
+override SOURCES  += src/config.c src/nickeltypefix.cc src/shape_cache.cc src/small_caps.cc src/font_dropdown.cc
 
 # The vertical-text fix uses QString (KepubBookReader::pageStyleCss returns QString and
 # writingDirectionFromString takes QString const&), so link Qt5Core. NickelHook.mk turns
 # PKGCONF entries into the right -I/-l flags from the nickeltc sysroot.
 # Fixes 3 and 5 patch QtGui code, and Fix 9 assigns QGlyphRun paints to pages,
-# so link Qt5Gui too.
-override PKGCONF  += Qt5Core Qt5Gui
+# so link Qt5Gui too. Fix 12's font dropdown repair uses QLabel from Qt5Widgets.
+override PKGCONF  += Qt5Core Qt5Gui Qt5Widgets
 
 # Fix 12 shapes through QTextEngine, which lives in Qt's private headers. pkg-config reports an
 # unsysrooted include dir, so find the versioned private tree in the toolchain sysroot instead and
