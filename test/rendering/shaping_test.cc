@@ -226,6 +226,50 @@ static int small_caps_use_font_glyphs()
     return 0;
 }
 
+static void small_caps_cache_cycles()
+{
+    const QRawFont raw = QRawFont::fromFont(font("Vollkorn"));
+    check(raw.isValid(), "cache fixture did not load");
+    QFontEngine *engine = QRawFontPrivate::get(raw)->fontEngine;
+    const QString family = engine->fontDef.family;
+    const quint32 lower = raw.glyphIndexesForString(QStringLiteral("o"))[0];
+    // Give one real font distinct face identities. The cache reads real GSUB/GPOS tables,
+    // but the test needs no collection of 65 font files. Restore the engine before rendering.
+    auto lookup = [&](int face) {
+        engine->fontDef.family = QStringLiteral("cache fixture %1").arg(face);
+        const NtfScFontRef record = ntf_sc_font_for(engine);
+        check(record && record->has_smcp, "small caps stopped working after the cache filled");
+        check(ntf_sc_font_count <= NTF_SC_MAX_FONTS, "font cache exceeded its capacity");
+        return record;
+    };
+    NtfScFontRef first = lookup(0);
+    const uint16_t small = first->smcp[lower];
+    check(small == 797, "wrong cached small-cap glyph");
+    const QWeakPointer<const NtfScFont> firstLifetime(first);
+    QWeakPointer<const NtfScFont> oldest;
+    for (int i = 1; i < NTF_SC_MAX_FONTS; ++i) {
+        const NtfScFontRef record = lookup(i);
+        if (i == 1) oldest = record;
+    }
+    check(lookup(0).data() == first.data(), "cache hit rebuilt a font record");
+    lookup(NTF_SC_MAX_FONTS);
+    check(oldest.isNull(), "cache did not release the least recently used record");
+    check(lookup(0).data() == first.data(), "cache evicted a recently used record");
+
+    for (int i = NTF_SC_MAX_FONTS + 1; i <= 2 * NTF_SC_MAX_FONTS; ++i) lookup(i);
+    bool firstCached = false;
+    for (int i = 0; i < ntf_sc_font_count; ++i)
+        if (ntf_sc_fonts[i].data() == first.data()) firstCached = true;
+    check(!firstCached, "inactive record remained cached after a full cycle");
+    check(!firstLifetime.isNull() && first->smcp[lower] == small && !first->ligatures.isEmpty(),
+          "eviction invalidated a record still used by a render");
+    first.clear();
+    check(firstLifetime.isNull(), "evicted record survived its final reader");
+    check(lookup(0)->smcp[lower] == small, "revisiting an evicted font changed its small caps");
+    engine->fontDef.family = family;
+    qDebug("PASS: 65 face identities, LRU eviction, held-record lifetime, and revisiting a font");
+}
+
 int main(int argc, char **argv)
 {
     check(argc == 3, "supply the fixture font directory and cache or small-caps");
@@ -248,5 +292,6 @@ int main(int argc, char **argv)
         return 0;
     }
     check(strcmp(argv[2], "small-caps") == 0, "unknown shaping test");
+    small_caps_cache_cycles();
     return small_caps_use_font_glyphs();
 }

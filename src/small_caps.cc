@@ -43,6 +43,7 @@
 #include <QtGui/private/qfontengine_p.h>
 #include <QtCore/QByteArray>
 #include <QtCore/QVector>
+#include <QtCore/QSharedPointer>
 
 #include <cstdarg>
 #include <climits>
@@ -210,6 +211,11 @@ struct NtfScLigature {
 };
 
 struct NtfScFont {
+    NtfScFont() : id(0), has_smcp(false), upem(0), num_glyphs(0), smcp(0) {}
+    ~NtfScFont() { free(smcp); }
+    NtfScFont(const NtfScFont &) = delete;
+    NtfScFont &operator=(const NtfScFont &) = delete;
+
     unsigned long id;
     bool has_smcp;
     uint16_t upem;
@@ -221,8 +227,9 @@ struct NtfScFont {
     QVector<uint32_t> kern_subtables;   // PairPos subtables of the `kern` feature, in order
 };
 
+typedef QSharedPointer<const NtfScFont> NtfScFontRef;
 static const int NTF_SC_MAX_FONTS = 32;
-static NtfScFont *ntf_sc_fonts[NTF_SC_MAX_FONTS];
+static NtfScFontRef ntf_sc_fonts[NTF_SC_MAX_FONTS]; // most recently used first
 static int ntf_sc_font_count = 0;
 static pthread_mutex_t ntf_sc_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -395,34 +402,26 @@ static QFontEngine *ntf_sc_primary(QFontEngine *fe)
     return fe;
 }
 
-// The record for a face, built on first sight. Records are never freed: another thread may be
-// reading one, and a session sees a handful of faces at most. Past the cap a face is treated as
-// having no small caps, which is the stock outcome.
-static NtfScFont *ntf_sc_font_for(QFontEngine *fe)
+// The cache owns the 32 most recently used records. Callers keep their own reference while
+// reading a record, so eviction can release the cache's reference without invalidating a render.
+static NtfScFontRef ntf_sc_font_for(QFontEngine *fe)
 {
     fe = ntf_sc_primary(fe);
-    if (!fe) return 0;
+    if (!fe) return NtfScFontRef();
     const unsigned long id = ntf_sc_face_identity(fe);
 
     pthread_mutex_lock(&ntf_sc_lock);
     for (int i = 0; i < ntf_sc_font_count; ++i) {
         if (ntf_sc_fonts[i]->id == id) {
-            NtfScFont *f = ntf_sc_fonts[i];
+            const NtfScFontRef f = ntf_sc_fonts[i];
+            for (int j = i; j > 0; --j) ntf_sc_fonts[j] = ntf_sc_fonts[j - 1];
+            ntf_sc_fonts[0] = f;
             pthread_mutex_unlock(&ntf_sc_lock);
             return f;
         }
     }
-    if (ntf_sc_font_count >= NTF_SC_MAX_FONTS) {
-        pthread_mutex_unlock(&ntf_sc_lock);
-        return 0;
-    }
-
-    NtfScFont *f = new NtfScFont();
+    const QSharedPointer<NtfScFont> f(new NtfScFont());
     f->id = id;
-    f->has_smcp = false;
-    f->upem = 0;
-    f->num_glyphs = 0;
-    f->smcp = 0;
 
     const QByteArray head = fe->getSfntTable(NTF_TAG('h', 'e', 'a', 'd'));
     const QByteArray maxp = fe->getSfntTable(NTF_TAG('m', 'a', 'x', 'p'));
@@ -435,11 +434,11 @@ static NtfScFont *ntf_sc_font_for(QFontEngine *fe)
     if (f->upem && f->num_glyphs) {
         f->gsub = fe->getSfntTable(NTF_TAG('G', 'S', 'U', 'B'));
         if (f->gsub.size() >= 10) {
-            ntf_sc_read_smcp(f);
+            ntf_sc_read_smcp(f.data());
             if (f->has_smcp) {
-                ntf_sc_read_ligatures(f);
+                ntf_sc_read_ligatures(f.data());
                 f->gpos = fe->getSfntTable(NTF_TAG('G', 'P', 'O', 'S'));
-                if (f->gpos.size() >= 10) ntf_sc_read_kerning(f);
+                if (f->gpos.size() >= 10) ntf_sc_read_kerning(f.data());
             }
         }
         f->gsub = QByteArray();           // the map is built; the table is not needed again
@@ -450,7 +449,10 @@ static NtfScFont *ntf_sc_font_for(QFontEngine *fe)
         f->gpos = QByteArray();
     }
 
-    ntf_sc_fonts[ntf_sc_font_count++] = f;
+    const int last = qMin(ntf_sc_font_count, NTF_SC_MAX_FONTS - 1);
+    for (int i = last; i > 0; --i) ntf_sc_fonts[i] = ntf_sc_fonts[i - 1];
+    ntf_sc_fonts[0] = f;
+    if (ntf_sc_font_count < NTF_SC_MAX_FONTS) ++ntf_sc_font_count;
     pthread_mutex_unlock(&ntf_sc_lock);
 
     const QByteArray fam = fe->fontDef.family.toUtf8();
@@ -482,7 +484,7 @@ static QFontEngine *ntf_font_engine_entry(const QTextEngine *e, const QScriptIte
     plain.analysis.flags = QScriptAnalysis::None;
     QFontEngine *full = ntf_original_font_engine(e, plain, ascent, descent, leading);
     if (full) {
-        const NtfScFont *f = ntf_sc_font_for(full);
+        const NtfScFontRef f = ntf_sc_font_for(full);
         if (f && f->has_smcp) return full;
     }
     return ntf_original_font_engine(e, si, ascent, descent, leading);
@@ -584,7 +586,7 @@ int ntf_smallcaps_shape(const QTextEngine *e, const QScriptItem &si, const unsig
     if (!ntf_sc_active || si.analysis.flags != QScriptAnalysis::SmallCaps) return -1;
     if (!e->layoutData || itemLength <= 0) return -1;
     if (si.analysis.bidiLevel & 1) return -1;              // a right-to-left run: leave it alone
-    const NtfScFont *f = ntf_sc_font_for(fontEngine);
+    const NtfScFontRef f = ntf_sc_font_for(fontEngine);
     if (!f || !f->has_smcp || !f->smcp) return -1;
 
     // The text the item really holds, before shapeText uppercased its copy.
@@ -603,7 +605,7 @@ int ntf_smallcaps_shape(const QTextEngine *e, const QScriptItem &si, const unsig
     unsigned short *lc = e->logClusters(&si);
     if (!g.glyphs || !lc || n0 > g.numGlyphs) return n0;
 
-    int n = ntf_sc_expand_ligatures(f, g, lc, itemLength, n0);
+    int n = ntf_sc_expand_ligatures(f.data(), g, lc, itemLength, n0);
 
     int substituted = 0;
     for (int i = 0; i < n; ++i) {
@@ -629,7 +631,7 @@ int ntf_smallcaps_shape(const QTextEngine *e, const QScriptItem &si, const unsig
         for (int i = 0; i + 1 < n; ++i) {
             const glyph_t a = g.glyphs[i], b = g.glyphs[i + 1];
             if ((a >> 24) || (b >> 24)) continue;
-            const int k = ntf_sc_kern(f, (uint16_t)(a & 0xffff), (uint16_t)(b & 0xffff));
+            const int k = ntf_sc_kern(f.data(), (uint16_t)(a & 0xffff), (uint16_t)(b & 0xffff));
             if (!k) continue;
             const qreal px = k * scale;
             g.advances_x[i] += integer ? QFixed(qRound(px)) : QFixed::fromReal(px);

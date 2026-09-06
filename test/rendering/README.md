@@ -17,6 +17,7 @@ CI runs the same command in its `ARM rendering regressions` job. It builds a loc
 | Shaping cache | Differences between uncached, first cached, and replayed glyphs, positions, cluster mappings, justification attributes, font sizes, line metrics, or pixels. The test counts calls through the original trampoline to prove that replay occurred. |
 | Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, combining marks, Arabic direction, or the 96-character recording boundary. |
 | Small caps | Wrong small-cap glyph IDs, an unexpanded `ffi` ligature, a scaled font engine, changed line metrics, changed ordinary text or a font without `smcp`, or a cache replay that changes the result. |
+| Small-caps font cache | Refusing a new face after 32 entries, evicting a recently used entry, releasing a record still held by a render, retaining an unused evicted record, or changing the result when revisiting a font. Uses 65 distinct face identities with one real font's tables. |
 
 The Qt tests run once with old HarfBuzz and once with HarfBuzz NG. The shaping test installs the production shaper and font-engine detours on the runtime's actual Qt functions. It includes the production cache and small-caps sources so it can disable recording, count calls through the original trampoline, and check mapping buffers directly, without adding diagnostics to the shipped mod. The small-caps glyph expectation comes from names in the pinned Vollkorn font's `post` table, independently of the mod's GSUB parser.
 
