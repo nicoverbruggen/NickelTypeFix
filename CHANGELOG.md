@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Startup no longer warns that the mid-parse layout fix failed before attempting to install it.
 - Function detours now validate mapped code ranges, restore code-page permissions, protect their trampolines, and recover from failed installation before startup can continue.
 - The selected font preview no longer flashes or stays in a fallback font after a font change with fast shaping enabled.
 - Narrow custom line spacing no longer clips text or pushes paragraphs onto separate pages.

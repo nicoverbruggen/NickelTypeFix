@@ -1896,7 +1896,6 @@ static int ntf_init() {
         (void *)ntf_wv_totalPages);
 #endif
     ntf_crumb("symbols resolved");
-    ntf_log_unavailable_fixes();
 
     bool vertical_symbols_ready = real_cwv_setWritingDirection && ntf_writingDirectionFromString
         && ntf_cwv_settings && ntf_setUserStyleSheetUrl && ntf_wv_webView && real_wv_addCssToHtml;
@@ -1982,6 +1981,8 @@ static int ntf_init() {
 
     ntf_crumb("init finished");
     ntf_crumb_clear_later();
+    // Detour readiness is only known after installation has been attempted.
+    ntf_log_unavailable_fixes();
     ntf_log_fix_statuses(marker);
     return 0;
 }
