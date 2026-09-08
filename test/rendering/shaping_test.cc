@@ -59,11 +59,13 @@ struct Snapshot {
     }
 };
 
-static Snapshot render(const QString &text, const QFont &font, Qt::LayoutDirection direction = Qt::LeftToRight)
+static Snapshot render(const QString &text, const QFont &font, Qt::LayoutDirection direction = Qt::LeftToRight,
+                       bool designMetrics = false, qreal origin = 4)
 {
     QTextLayout layout(text, font);
     QTextOption option;
     option.setTextDirection(direction);
+    option.setUseDesignMetrics(designMetrics);
     layout.setTextOption(option);
     layout.beginLayout();
     QTextLine line = layout.createLine();
@@ -95,7 +97,7 @@ static Snapshot render(const QString &text, const QFont &font, Qt::LayoutDirecti
     result.pixels = QImage(2400, 140, QImage::Format_ARGB32);
     result.pixels.fill(Qt::white);
     QPainter painter(&result.pixels);
-    layout.draw(&painter, QPointF(4, 4));
+    layout.draw(&painter, QPointF(origin, 4));
     return result;
 }
 
@@ -104,6 +106,184 @@ static QFont font(const char *family, int size = 36)
     QFont f(QString::fromLatin1(family));
     f.setPixelSize(size);
     return f;
+}
+
+
+static QImage ink(const QImage &image)
+{
+    QRect bounds;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            if (image.pixel(x, y) != qRgb(255, 255, 255)) bounds |= QRect(x, y, 1, 1);
+    check(!bounds.isEmpty(), "empty spacing fixture");
+    return image.copy(bounds);
+}
+
+static void ng_spacing_is_independent_of_origin(bool ng)
+{
+    if (!ng) return;
+    ntf_cache_records = false;
+    bool reproduced = false;
+    for (int size : {22, 26, 31}) {
+        QFont f = font("Vollkorn", size);
+        const QString text = QStringLiteral("she slowly AVATAR");
+        ntf_shaper_is_ng = false;
+        const QImage original = ink(render(text, f).pixels);
+        for (qreal origin : {4.25, 4.5, 4.75})
+            reproduced |= ink(render(text, f, Qt::LeftToRight, false, origin).pixels) != original;
+        ntf_shaper_is_ng = true;
+        const QImage expected = ink(render(text, f).pixels);
+        for (qreal origin : {4.25, 4.5, 4.75})
+            check(ink(render(text, f, Qt::LeftToRight, false, origin).pixels) == expected,
+                  "NG word spacing changed at a fractional draw origin");
+        ntf_cache_records = true;
+        (void)render(text, f);
+        const unsigned calls = shapeCalls;
+        for (qreal origin : {4.25, 4.5, 4.75})
+            check(ink(render(text, f, Qt::LeftToRight, false, origin).pixels) == expected,
+                  "cached NG spacing changed at a fractional draw origin");
+        check(shapeCalls == calls, "corrected spacing did not exercise cache replay");
+        const QString longText = QString(100, QLatin1Char('n')) + text;
+        const QImage longExpected = ink(render(longText, f).pixels);
+        const unsigned long records = ntf_cache_stored;
+        const unsigned longCalls = shapeCalls;
+        check(ink(render(longText, f, Qt::LeftToRight, false, 4.25).pixels) == longExpected,
+              "uncached long NG item changed spacing at a fractional draw origin");
+        check(shapeCalls > longCalls && ntf_cache_stored == records,
+              "long spacing fixture did not bypass cache recording");
+        ntf_cache_records = false;
+        ntf_shaper_is_ng = false;
+        const Snapshot design = render(text, f, Qt::LeftToRight, true);
+        ntf_shaper_is_ng = true;
+        check(render(text, f, Qt::LeftToRight, true) == design, "NG correction changed design metrics");
+        f.setKerning(false);
+        ntf_shaper_is_ng = false;
+        const Snapshot noKern = render(text, f);
+        ntf_shaper_is_ng = true;
+        check(render(text, f) == noKern, "NG correction changed unkerned text");
+    }
+    check(reproduced, "fixture did not reproduce fractional-origin spacing before correction");
+    qDebug("PASS: NG spacing at four draw origins, design metrics, and kerning off");
+}
+
+static void ng_adjustment_rounding_guards(bool ng)
+{
+    if (!ng) return;
+    const int adjustments[] = {-97, -96, -95, -33, -32, -31, 0, 31, 32, 33, 95, 96, 97};
+    const int rounded[] = {-128, -64, -64, -64, 0, 0, 0, 0, 64, 64, 64, 128, 128};
+    bool fractionalBase = false;
+    for (bool unhinted : {false, true}) {
+        QFont f = font("Vollkorn", 27);
+        if (unhinted) f.setHintingPreference(QFont::PreferNoHinting);
+        QTextLayout layout(QString(13, QLatin1Char('n')), f);
+        layout.setCacheEnabled(true);
+        layout.beginLayout();
+        QTextLine line = layout.createLine();
+        line.setLineWidth(2000);
+        layout.endLayout();
+        (void)line.naturalTextWidth();
+        QTextEngine *e = layout.engine();
+        QScriptItem &si = e->layoutData->items[0];
+        check(si.num_glyphs == 13, "rounding fixture has unexpected glyph count");
+        QFontEngine *fe = e->fontEngine(si);
+        QGlyphLayout g = e->availableGlyphs(&si).mid(0, 13);
+        QVarLengthGlyphLayoutArray base(13);
+        memcpy(base.glyphs, g.glyphs, 13 * sizeof(glyph_t));
+        fe->recalcAdvances(&base, QFontEngine::ShaperFlags(0));
+        for (int i = 0; i < 13; i++) {
+            fractionalBase |= (base.advances_x[i].value() & 63) != 0;
+            g.advances_x[i] = base.advances_x[i] + QFixed::fromFixed(adjustments[i]);
+        }
+        ntf_round_ng_adjustments(e, si, fe, 13);
+        for (int i = 0; i < 13; i++)
+            check(g.advances_x[i] == base.advances_x[i] + QFixed::fromFixed(rounded[i]),
+                  "NG adjustment rounding changed base metrics or signed-half convention");
+        for (int guard = 0; guard < 7; guard++) {
+            for (int i = 0; i < 13; i++) g.advances_x[i] = base.advances_x[i] + QFixed::fromFixed(17);
+            if (guard == 0) e->option.setUseDesignMetrics(true);
+            if (guard == 1) si.analysis.bidiLevel = 1;
+            if (guard == 2) g.offsets[5].x = QFixed::fromFixed(17);
+            if (guard == 3) g.offsets[5].y = QFixed::fromFixed(17);
+            if (guard == 4) g.advances_y[5] = 1;
+            if (guard == 5) g.advances_x[5] = 0;
+            if (guard == 6) ntf_shaper_is_ng = false;
+            QVector<QFixed> before;
+            for (int i = 0; i < 13; i++) before.append(g.advances_x[i]);
+            ntf_round_ng_adjustments(e, si, fe, 13);
+            for (int i = 0; i < 13; i++)
+                check(g.advances_x[i] == before[i], "NG correction ignored a positioning guard");
+            check(memcmp(g.glyphs, base.glyphs, 13 * sizeof(glyph_t)) == 0, "NG correction changed glyph IDs");
+            e->option.setUseDesignMetrics(false);
+            si.analysis.bidiLevel = 0;
+            g.offsets[5].x = 0;
+            g.offsets[5].y = 0;
+            g.advances_y[5] = 0;
+            ntf_shaper_is_ng = true;
+        }
+    }
+    check(fractionalBase, "rounding fixture did not exercise fractional base metrics");
+    qDebug("PASS: signed GPOS rounding preserves fractional bases and guarded positioning");
+}
+
+
+// The minimal offscreen font database does not discover fallback families. Route two
+// real loaded engines explicitly, using the same encoded glyph IDs as Qt's fallback path.
+class RoundingFontEngineMulti : public QFontEngineMulti
+{
+public:
+    RoundingFontEngineMulti(QFontEngine *primary, QFontEngine *fallback) : QFontEngineMulti(2)
+    {
+        engines[0] = primary;
+        engines[1] = fallback;
+        primary->ref.ref();
+        fallback->ref.ref();
+        fontDef = primary->fontDef;
+    }
+    void loadEngine(int) override { qFatal("unexpected fallback engine request"); }
+};
+
+static void ng_rounding_preserves_fallback_glyphs(bool ng)
+{
+    if (!ng) return;
+    QFont f = font("Vollkorn", 27);
+    QRawFont primary = QRawFont::fromFont(f);
+    QRawFont fallback = QRawFont::fromFont(font("DejaVu Sans", 41));
+    QFontEngine *engines[] = {QRawFontPrivate::get(primary)->fontEngine,
+                            QRawFontPrivate::get(fallback)->fontEngine};
+    RoundingFontEngineMulti multi(engines[0], engines[1]);
+    const glyph_t ids[] = {primary.glyphIndexesForString(QStringLiteral("n"))[0],
+                          fallback.glyphIndexesForString(QStringLiteral("m"))[0]};
+    check(ids[0] && ids[1], "fallback fixture has a missing glyph");
+    QTextLayout layout(QStringLiteral("nnn"), f);
+    layout.setCacheEnabled(true);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    line.setLineWidth(2000);
+    layout.endLayout();
+    (void)line.naturalTextWidth();
+    QTextEngine *e = layout.engine();
+    const QScriptItem &si = e->layoutData->items[0];
+    check(si.num_glyphs == 3, "fallback fixture has unexpected glyph count");
+    QGlyphLayout g = e->availableGlyphs(&si).mid(0, 3);
+    QFixed expected[3];
+    glyph_t encoded[3];
+    for (int i = 0; i < 3; ++i) {
+        const int which = i == 1 ? 1 : 0;
+        QVarLengthGlyphLayoutArray single(1);
+        single.glyphs[0] = ids[which];
+        engines[which]->recalcAdvances(&single, QFontEngine::ShaperFlags(0));
+        expected[i] = single.advances_x[0];
+        encoded[i] = (which << 24) | ids[which];
+        g.glyphs[i] = encoded[i];
+        g.advances_x[i] = expected[i] + QFixed::fromFixed(17);
+    }
+    check(expected[0] != expected[1], "fallback fixture did not use distinct base metrics");
+    ntf_round_ng_adjustments(e, si, &multi, 3);
+    for (int i = 0; i < 3; ++i) {
+        check(g.glyphs[i] == encoded[i], "NG rounding changed encoded fallback glyphs");
+        check(g.advances_x[i] == expected[i], "NG rounding used the wrong fallback metrics");
+    }
+    qDebug("PASS: NG rounding routes encoded fallback IDs to two real font engines");
 }
 
 static void cache_matches_original()
@@ -146,6 +326,30 @@ static void cache_matches_original()
     }
     check(ntf_cache_stored > 0 && firstCalls > repeatedCalls, "cache test did not exercise a replay");
     qDebug("PASS: cache records=%lu, original calls first=%u repeated=%u", ntf_cache_stored, firstCalls, repeatedCalls);
+}
+
+static void cache_separates_metric_modes()
+{
+    // Qt callers can request fractional design advances or pixel metrics with the same font. Seed each mode first, then ask the cache for the other one.
+    for (bool firstDesign : {false, true}) {
+        QFont f = font("Vollkorn", firstDesign ? 23 : 22);
+        const QString text = QStringLiteral("she slowly she AVATAR");
+        ntf_cache_records = false;
+        const Snapshot first = render(text, f, Qt::LeftToRight, firstDesign);
+        const Snapshot second = render(text, f, Qt::LeftToRight, !firstDesign);
+        check(!(first == second), "metric modes do not differ in the fixture");
+        ntf_cache_records = true;
+        check(render(text, f, Qt::LeftToRight, firstDesign) == first,
+              "first metric mode changed while recording");
+        check(render(text, f, Qt::LeftToRight, !firstDesign) == second,
+              "cache reused advances from the other metric mode");
+        const unsigned before = shapeCalls;
+        check(render(text, f, Qt::LeftToRight, firstDesign) == first &&
+              render(text, f, Qt::LeftToRight, !firstDesign) == second,
+              "metric mode replay changed rendering");
+        check(shapeCalls == before, "metric mode test did not replay both records");
+    }
+    qDebug("PASS: design and device metrics remain separate in both cache orders");
 }
 
 static QVector<quint32> glyphs(const Snapshot &snapshot)
@@ -284,11 +488,15 @@ int main(int argc, char **argv)
         ? "_ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb"
         : "_ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb";
     // The selector was set before QApplication. Install the production cache on that shaper.
-    check(ntf_install_cache(dlsym(RTLD_DEFAULT, symbol)) == 0, "shaper detour did not install");
+    check(ntf_install_cache(dlsym(RTLD_DEFAULT, symbol), ng) == 0, "shaper detour did not install");
     originalShape = ntf_original_shape;
     ntf_original_shape = counted_shape;
     if (strcmp(argv[2], "cache") == 0) {
+        ng_spacing_is_independent_of_origin(ng);
+        ng_adjustment_rounding_guards(ng);
+        ng_rounding_preserves_fallback_glyphs(ng);
         cache_matches_original();
+        cache_separates_metric_modes();
         return 0;
     }
     check(strcmp(argv[2], "small-caps") == 0, "unknown shaping test");

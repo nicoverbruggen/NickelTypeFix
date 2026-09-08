@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10
+
+### Fixed
+
+- Fixed inconsistent one-pixel letter spacing introduced by fast text shaping, by restoring the old shaper's rounding of kerning adjustments.
+- Fixed shaping-cache entries being reused between design-metric and device-metric modes.
+
 ## v0.9
 
 ### Documentation

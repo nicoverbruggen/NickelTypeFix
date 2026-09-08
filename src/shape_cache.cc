@@ -74,11 +74,37 @@ static void ntf_fill_justification(const QTextEngine *e, const QScriptItem &si,
     }
 }
 
-static int ntf_install_cache(void *sym);
+static int ntf_install_cache(void *sym, bool ng = false);
 
 typedef int (*ShapeFn)(const QTextEngine *, const QScriptItem &, const ushort *, int,
                        QFontEngine *, const QVector<uint> &, bool);
 static ShapeFn ntf_original_shape = 0;
+static bool ntf_shaper_is_ng = false;
+
+// Old HarfBuzz rounds GPOS advance adjustments when design metrics are off. NG keeps
+// them fractional, so Qt's rasterizer floors each glyph at a different pixel phase in
+// otherwise identical words. Keep the font's base metrics and round only the adjustment.
+// Attached marks and directional positioning need their original offsets and advances.
+static void ntf_round_ng_adjustments(const QTextEngine *e, const QScriptItem &si,
+                                     QFontEngine *fontEngine, int count)
+{
+    if (!ntf_shaper_is_ng || e->option.useDesignMetrics() || !fontEngine || count <= 0
+        || (si.analysis.bidiLevel & 1)) return;
+    QGlyphLayout g = e->availableGlyphs(&si).mid(0, count);
+    for (int i = 0; i < count; ++i) {
+        if (g.advances_x[i] <= 0 || g.advances_y[i] != 0
+            || g.offsets[i].x != 0 || g.offsets[i].y != 0) return;
+    }
+    QVarLengthGlyphLayoutArray base(count);
+    memcpy(base.glyphs, g.glyphs, count * sizeof(glyph_t));
+    // QFontEngineMulti resolves the encoded sub-font bits, including fallback glyphs.
+    fontEngine->recalcAdvances(&base, QFontEngine::ShaperFlags(0));
+    for (int i = 0; i < count; ++i) {
+        const QFixed adjustment = g.advances_x[i] - base.advances_x[i];
+        g.advances_x[i] = base.advances_x[i] + adjustment.round();
+    }
+}
+
 
 // The classification has to happen wherever the real shaper runs. Two paths reach it without
 // going through the cache -- items longer than the cache will copy, and items that find no room to
@@ -92,9 +118,11 @@ static int ntf_shape_and_classify(const QTextEngine *e, const QScriptItem &si,
     // font's own small caps; -1 means it is not one of those and the real shaper runs as usual.
     int n = ntf_smallcaps_shape(e, si, string, itemLength, fontEngine, itemBoundaries,
                                 kerningEnabled, ntf_original_shape);
-    if (n < 0)
+    if (n < 0) {
         n = ntf_original_shape(e, si, string, itemLength, fontEngine, itemBoundaries,
                                kerningEnabled);
+        if (n > 0) ntf_round_ng_adjustments(e, si, fontEngine, n);
+    }
     if (n > 0) ntf_fill_justification(e, si, string, itemLength, n);
     return n;
 }
@@ -158,7 +186,7 @@ struct NtfRecord {
     unsigned long engine_id;   // QFontDef-derived identity, not an address
     ushort *text;
     uint text_length;
-    unsigned key_bits;             // kerning, bidi parity, script, sub-engine index
+    unsigned key_bits;             // kerning, bidi parity, script, sub-engine, small caps, metrics
     uint num_glyphs;
     glyph_t *glyphs;
     QFixed *advances_x;
@@ -254,11 +282,14 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
     // face; keeping it in the key stops one item's result standing in for another's.
     const QGlyphLayout available = e->availableGlyphs(&si);
     const unsigned sub_engine = available.numGlyphs > 0 ? (available.glyphs[0] >> 24) : 0;
+    // Both shapers read useDesignMetrics: the same font can produce fractional or rounded
+    // advances. A result from one mode cannot supply the spacing for the other.
     const unsigned key_bits = (kerningEnabled ? 1u : 0u)
                             | ((si.analysis.bidiLevel & 1u) << 1)
                             | ((unsigned)si.analysis.script << 2)
                             | (sub_engine << 12)
-                            | ((si.analysis.flags == QScriptAnalysis::SmallCaps ? 1u : 0u) << 20);
+                            | ((si.analysis.flags == QScriptAnalysis::SmallCaps ? 1u : 0u) << 20)
+                            | ((e->option.useDesignMetrics() ? 1u : 0u) << 21);
 
     const unsigned long engine_id = ntf_engine_identity(fontEngine);
     const unsigned long h = ntf_hash(engine_id, string, (uint)itemLength, key_bits, itemBoundaries);
@@ -403,13 +434,15 @@ static void ntf_disable_harfbuzz_ng(void *shape_text)
     if (flag) *flag = 0;
 }
 
-static int ntf_install_cache(void *sym)
+static int ntf_install_cache(void *sym, bool ng)
 {
     // Through the checked detour, not a second copy of it. An eight-byte copy that does not decode
     // instruction boundaries runs half an instruction on any firmware whose prologue differs, and
     // this installs at init while the boot failsafe is still armed.
     if (!sym) return -1;
-    return ntf_detour_at(sym, (void *)&ntf_cache_entry, (void **)&ntf_original_shape, 0);
+    const int result = ntf_detour_at(sym, (void *)&ntf_cache_entry, (void **)&ntf_original_shape, 0);
+    if (result == 0) ntf_shaper_is_ng = ng;
+    return result;
 }
 
 
@@ -421,7 +454,7 @@ extern "C" bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *
     ntf_cache_records = false;
     const unsigned char *flag = ntf_find_ng_flag(shape_text);
     void *sym = (flag && *flag) ? shaper_ng : shaper_old;
-    return ntf_install_cache(sym) == 0;
+    return ntf_install_cache(sym, flag && *flag) == 0;
 }
 
 extern "C" ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old,
@@ -440,7 +473,7 @@ extern "C" ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *sha
         switched_here = (ng == 0);
     }
     status.cache_installed =
-        (ntf_install_cache(status.ng_enabled ? shaper_ng : shaper_old) == 0);
+        (ntf_install_cache(status.ng_enabled ? shaper_ng : shaper_old, status.ng_enabled) == 0);
 
     // The newer shaper leaves the justification class unset, and it is this detour that fills it
     // in. Switching the engine but failing to install the detour would therefore break justified

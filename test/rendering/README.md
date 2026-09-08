@@ -15,8 +15,9 @@ CI runs the same command in its `ARM rendering regressions` job. It builds a loc
 | ARM detour installer | Incorrect relocated instructions, page permissions, or recovery behavior, including actual calls through the replacement and trampoline. |
 | Log rotation | Exceeding the size limit during one session, reordered buffered messages, growth after failed rotation, interleaved writes, or recreating the folder after uninstall. |
 | Selected font dropdown | Persistent fallback after font reload, a fallback frame during selection, or a repair that affects the wrong label or outlives its widget. Runs twice with each shaper. |
+| NG pixel spacing | Different word spacing at quarter-pixel draw origins, including cache replay and long items. Checks signed adjustment rounding, fractional base metrics, design metrics, kerning off, and positioning guards. |
 | Shaping cache | Differences between uncached, first cached, and replayed glyphs, positions, cluster mappings, justification attributes, font sizes, line metrics, or pixels. The test counts calls through the original trampoline to prove that replay occurred. |
-| Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, combining marks, Arabic direction, or the 96-character recording boundary. |
+| Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, rounded versus design metrics in both cache orders, combining marks, Arabic direction, or the 96-character recording boundary. |
 | Small caps | Wrong small-cap glyph IDs, an unexpanded `ffi` ligature, a scaled font engine, changed line metrics, changed ordinary text or a font without `smcp`, or a cache replay that changes the result. |
 | Small-caps font cache | Refusing a new face after 32 entries, evicting a recently used entry, releasing a record still held by a render, retaining an unused evicted record, or changing the result when revisiting a font. Uses 65 distinct face identities with one real font's tables. |
 

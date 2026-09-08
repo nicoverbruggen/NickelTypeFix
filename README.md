@@ -40,7 +40,7 @@ These fixes act on WebKit's complex text path. `optimizeLegibility` enables that
 
 ### How fast a book opens
 
-The shaping cache reuses results from the selected shaper. Switching to HarfBuzz NG can change glyph selection, spacing, or line breaks because it applies font features differently. The switch affects Qt text throughout Nickel, including its UI, and includes a repair for the selected-font dropdown preview.
+The shaping cache reuses results from the selected shaper. The mod rounds NG’s non-design kerning adjustments like the old shaper, fixing one-pixel spacing differences between repeated words. Runs with attached marks, positioning offsets, vertical advances or right-to-left text keep their original positioning. Switching to HarfBuzz NG can change glyph selection, spacing, or line breaks because it applies font features differently. The switch affects Qt text throughout Nickel, including its UI, and includes a repair for the selected-font dropdown preview.
 
 | The problem | What the mod does | Fix |
 | --- | --- | --: |
