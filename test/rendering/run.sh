@@ -16,6 +16,7 @@ qemu=/opt/rendering/qemu/usr/bin/qemu-arm-static
 
 "$cc" -std=c99 -Wall -Wextra -Werror -shared -fPIC "$repo/test/rendering/auxv.c" -o "$work/auxv.so"
 "$qt/usr/bin/moc" "$repo/test/font-dropdown/font_dropdown_test.cc" -o "$work/font_dropdown_test.moc"
+"$qt/usr/bin/moc" "$repo/test/rendering/epub_delivery_test.cc" -o "$work/epub_delivery_test.moc"
 
 compile_qt() {
     "$cxx" -std=gnu++11 -mthumb -Wall -Wextra -Werror -fPIC -pthread \
@@ -30,6 +31,7 @@ compile_qt "$repo/test/font-dropdown/font_dropdown_test.cc" "$repo/src/font_drop
     -o "$work/font-dropdown"
 compile_qt "$repo/test/rendering/shaping_test.cc" "$repo/src/detour.cc" \
     -o "$work/shaping"
+compile_qt "$repo/test/rendering/epub_delivery_test.cc" -o "$work/epub-delivery"
 "$cxx" -std=c++11 -mthumb -Wall -Wextra -Werror "$repo/test/detour/detour_test.cc" -o "$work/detour"
 printf '%s\n' 'void nh_log(const char *fmt, ...);' > "$work/NickelHook.h"
 "$cc" -std=gnu11 -mthumb -Wall -Wextra -Werror -pthread -I"$work" \
@@ -46,9 +48,11 @@ run_arm() {
 }
 run_arm "$work/detour"
 run_arm "$work/logging"
+run_arm "$work/epub-delivery"
 for shaper in ng old; do
     export QT_HARFBUZZ="$shaper"
     run_arm "$work/font-dropdown" "$fonts/Vollkorn-Regular.ttf" "$fonts/NotoSans-Regular.ttf"
     run_arm "$work/shaping" "$fonts" cache
     run_arm "$work/shaping" "$fonts" small-caps
+    run_arm "$work/shaping" "$fonts" line-layout
 done

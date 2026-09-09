@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.11
+
+### Added
+
+- Long chapters load without Nickel's fixed 100 ms pauses between local EPUB chunks. Set `ntf_fast_epub_delivery:0` to keep those pauses.
+
+### Improved
+
+- Reduced chapter layout work by skipping Qt's repeated preparation of text lines whose glyphs are already ready.
+- Reduced page-boundary correction work in long chapters by searching only the line rectangles that can affect each page.
+
 ## v0.10
 
 ### Fixed

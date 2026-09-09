@@ -10,6 +10,7 @@ _ntf_kepubReaderCtor
 _ntf_kepubReaderDtor
 _ntf_lineHeightScalars
 _ntf_qp_drawGlyphRun
+_ntf_qtimer_singleShotImpl
 _ntf_qwf_render
 _ntf_qwp_setViewportSize
 _ntf_qws_setAttribute
@@ -29,6 +30,7 @@ _ZN10WebkitView12addCssToHtmlE7QString
 _ZN10WebkitView14setCurrentPageEi
 _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
 _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
+_ZN11QTextEngine9shapeLineERK11QScriptLine
 _ZN12QWebSettings12setAttributeENS_12WebAttributeEb
 _ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString
 _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
@@ -43,6 +45,7 @@ _ZN19KepubBookReaderBase12loadFinishedEb
 _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
 _ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
 _ZN6QLabel7setTextERK7QString
+_ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE
 _ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb
 _ZN9QWebFrame6renderEP8QPainterRK7QRegion
 _ZNK10WebkitView10totalPagesEv
@@ -66,6 +69,7 @@ ntf_center_images = '1'
 ntf_cpsp_fix = '1'
 ntf_dropcap_fix = '1'
 ntf_enabled = '1'
+ntf_fast_epub_delivery = '1'
 ntf_fast_shaping = '1'
 ntf_hinting_allowlist = ''
 ntf_justify_kospan = '1'
@@ -86,6 +90,7 @@ ntf_center_images = '1'
 ntf_cpsp_fix = '1'
 ntf_dropcap_fix = '1'
 ntf_enabled = '1'
+ntf_fast_epub_delivery = '1'
 ntf_fast_shaping = '1'
 ntf_hinting_allowlist = ''
 ntf_justify_kospan = '1'
@@ -105,5 +110,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  314
-sha256 1b737e0b85d08abc8d37f1a73bdb938ebf113a10ccf18aefee81e6a2f9f5840e
+count  326
+sha256 d769c06495649dcc267979e27b3eb6c1b251c4b4f34770494ebbfc7bad7db87b

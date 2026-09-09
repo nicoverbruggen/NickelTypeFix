@@ -474,9 +474,119 @@ static void small_caps_cache_cycles()
     qDebug("PASS: 65 face identities, LRU eviction, held-record lifetime, and revisiting a font");
 }
 
+struct LineSnapshot {
+    QVector<qreal> positions;
+    QVector<int> cursors;
+    QImage pixels;
+    bool operator==(const LineSnapshot &other) const {
+        return positions == other.positions && cursors == other.cursors && pixels == other.pixels;
+    }
+};
+
+static LineSnapshot render_lines(const QString &text, Qt::LayoutDirection direction)
+{
+    QTextLayout layout(text, font("Noto Sans"));
+    QTextOption option;
+    option.setTextDirection(direction);
+    option.setAlignment(Qt::AlignJustify);
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    qreal y = 0;
+    while (true) {
+        QTextLine line = layout.createLine();
+        if (!line.isValid()) break;
+        line.setLineWidth(260);
+        line.setPosition(QPointF(7, y));
+        y += line.height();
+    }
+    layout.endLayout();
+    LineSnapshot result;
+    for (int i = 0; i < layout.lineCount(); i++) {
+        QTextLine line = layout.lineAt(i);
+        result.positions << line.naturalTextWidth() << line.height();
+        for (int pos = line.textStart(); pos <= line.textStart() + line.textLength(); pos++) {
+            for (QTextLine::Edge edge : {QTextLine::Leading, QTextLine::Trailing}) {
+                int cursor = pos;
+                result.positions << line.cursorToX(&cursor, edge);
+                result.cursors << cursor;
+            }
+        }
+    }
+    result.pixels = QImage(280, qMax(1, (int)y + 1), QImage::Format_ARGB32_Premultiplied);
+    result.pixels.fill(Qt::white);
+    QPainter painter(&result.pixels);
+    layout.draw(&painter, QPointF());
+    painter.end();
+    return result;
+}
+
+static NtfShapeLineFn originalLine;
+static unsigned lineCalls;
+static void counted_line(QTextEngine *engine, const QScriptLine &line)
+{
+    ++lineCalls;
+    originalLine(engine, line);
+}
+
+static void line_layout_matches_original()
+{
+    const QString fixtures[] = {
+        QStringLiteral("A familiar office offers efficient filing. Another line follows it."),
+        QString::fromUtf8("Cafe\xcc\x81, office\xc2\xa0" "files and co\xc2\xad" "operate."),
+        QString::fromUtf8("English \xd8\xa7\xd9\x84\xd8\xb9\xd8\xb1\xd8\xa8\xd9\x8a\xd8\xa9 123 English"),
+        QStringLiteral("one\ttwo\tthree\nA second line with\ttabs."),
+        QStringLiteral("An unbrokenwordlongenoughtowrapacrossmultiplelines finishes here."),
+    };
+    QVector<LineSnapshot> expected;
+    for (const QString &text : fixtures)
+        for (Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft})
+            expected.append(render_lines(text, direction));
+
+    check(!ntf_line_layout_enable(nullptr), "missing line-layout symbol did not sit out");
+    check(ntf_line_layout_enable(dlsym(RTLD_DEFAULT, "_ZN11QTextEngine9shapeLineERK11QScriptLine")),
+          "line-layout detour did not install");
+    originalLine = ntf_original_shape_line;
+    ntf_original_shape_line = counted_line;
+    int i = 0;
+    for (const QString &text : fixtures)
+        for (Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft})
+            check(render_lines(text, direction) == expected[i++],
+                  "line shortcut changed cursor positions, metrics, or pixels");
+
+    QTextEngine engine(QStringLiteral("one two three"), font("Noto Sans"));
+    QScriptLine line;
+    line.from = 0;
+    line.length = engine.text.size();
+    check(!ntf_line_layout_prepared(&engine, line), "unitemized line was treated as ready");
+    engine.itemize();
+    check(!ntf_line_layout_prepared(&engine, line), "unshaped line was treated as ready");
+    unsigned before = lineCalls;
+    ntf_prepare_line(&engine, line);
+    check(lineCalls == before + 1, "unshaped line skipped the original preparation");
+    check(ntf_line_layout_prepared(&engine, line), "shaped ordinary line was not ready");
+    before = lineCalls;
+    ntf_prepare_line(&engine, line);
+    check(lineCalls == before, "ready line repeated its preparation");
+
+    QScriptItem &item = engine.layoutData->items.last();
+    const unsigned flags = item.analysis.flags;
+    item.analysis.flags = QScriptAnalysis::Tab;
+    check(!ntf_line_layout_prepared(&engine, line), "tab width calculation was skipped");
+    item.analysis.flags = QScriptAnalysis::Object;
+    check(!ntf_line_layout_prepared(&engine, line), "inline object resizing was skipped");
+    item.analysis.flags = flags;
+    item.num_glyphs = 0;
+    check(!ntf_line_layout_prepared(&engine, line), "partially shaped line was treated as ready");
+    before = lineCalls;
+    render_lines(fixtures[3], Qt::LeftToRight);
+    check(lineCalls > before, "tab fixture never reached the original line preparation");
+    qDebug("PASS: line preparation, cursor positions, wrapping, bidi, tabs, and fallback guards");
+}
+
 int main(int argc, char **argv)
 {
-    check(argc == 3, "supply the fixture font directory and cache or small-caps");
+    check(argc == 3, "supply the fixture font directory and cache, small-caps, or line-layout");
     bool ng = qgetenv("QT_HARFBUZZ") == "ng";
     ntf_test_select_shaper(ng);
     QApplication app(argc, argv);
@@ -491,6 +601,10 @@ int main(int argc, char **argv)
     check(ntf_install_cache(dlsym(RTLD_DEFAULT, symbol), ng) == 0, "shaper detour did not install");
     originalShape = ntf_original_shape;
     ntf_original_shape = counted_shape;
+    if (strcmp(argv[2], "line-layout") == 0) {
+        line_layout_matches_original();
+        return 0;
+    }
     if (strcmp(argv[2], "cache") == 0) {
         ng_spacing_is_independent_of_origin(ng);
         ng_adjustment_rounding_guards(ng);

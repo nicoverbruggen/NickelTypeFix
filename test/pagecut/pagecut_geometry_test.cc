@@ -1,4 +1,6 @@
 #include <climits>
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -376,7 +378,89 @@ static void test_trim_admits_the_tightest_line_spacing() {
             "trim admits tightest spacing", "the small-advance guard did not report the refusal");
 }
 
+static void test_rectangle_search_bounds() {
+    TestRect rects[] = {{INT_MIN, 70}, {-10, 70}, {-10, 30}, {0, 70}, {INT_MAX, 70}};
+    const long long bounds[] = {(long long)INT_MIN - INT_MAX, INT_MIN, -11, -10, -9,
+                                0, 1, INT_MAX, (long long)INT_MAX + 1};
+    const int expected[] = {0, 0, 1, 1, 3, 3, 4, 4, 5};
+    for (unsigned i = 0; i < sizeof(expected) / sizeof(expected[0]); i++)
+        require(ntf_pagecut_lower_bound(rects, 5, bounds[i]) == expected[i],
+                "rectangle search", "a bound lost a duplicate or overflowed");
+    require(ntf_pagecut_lower_bound<TestRect>(nullptr, 0, 0) == 0,
+            "rectangle search", "empty input did not produce an empty slice");
+}
+
+static uint32_t geometry_random(uint32_t &state) {
+    state = state * 1664525u + 1013904223u;
+    return state;
+}
+
+// The old full scans are the oracle. Exercise the narrower caller slices with repeated tops,
+// nested boxes, invalid heights and extreme coordinates, including boundaries at box ends.
+static void test_bounded_scans_match_full_scans() {
+    uint32_t state = 73491;
+    for (int trial = 0; trial < 2000; trial++) {
+        std::vector<TestRect> rects;
+        int max_height = 0;
+        for (int i = 0; i < 80; i++) {
+            int top = (int)(geometry_random(state) % 500) * 20 - 5000;
+            int height = (int)(geometry_random(state) % 180) - 10;
+            if (i == 0) top = INT_MIN;
+            if (i == 1) top = INT_MAX;
+            if (i == 2 && trial % 3 == 0) height = INT_MAX;
+            rects.push_back(TestRect{top, height});
+            if (height > max_height) max_height = height;
+        }
+        std::sort(rects.begin(), rects.end(), [](const TestRect &a, const TestRect &b) {
+            return a.top < b.top;
+        });
+        int n = (int)rects.size();
+        for (int i = 0; i < n; i++) {
+            long long end = (long long)rects[i].top + rects[i].h;
+            if (end < INT_MIN || end > INT_MAX) continue;
+            int boundary = (int)end;
+            int first = ntf_pagecut_lower_bound(rects.data(), n, end - max_height);
+            int last = ntf_pagecut_lower_bound(rects.data(), n, end);
+            int full = 123, bounded = 123;
+            bool full_ok = ntf_pagecut_snap_boundary(rects.data(), n, boundary, &full);
+            bool bounded_ok = ntf_pagecut_snap_boundary(rects.data() + first, last - first,
+                                                       boundary, &bounded);
+            require(full_ok == bounded_ok && full == bounded,
+                    "bounded snap", "narrowing the scan changed the boundary");
+
+            int page_top = rects[i].top;
+            int page_end = rects[(i + 9) % n].top;
+            first = ntf_pagecut_lower_bound(rects.data(), n, page_top);
+            last = ntf_pagecut_lower_bound(rects.data(), n, page_end);
+            full = bounded = 123;
+            full_ok = ntf_pagecut_fit_boundary(rects.data(), n, page_top, page_end, 1000, &full);
+            bounded_ok = ntf_pagecut_fit_boundary(rects.data() + first, last - first,
+                                                  page_top, page_end, 1000, &bounded);
+            require(full_ok == bounded_ok && full == bounded,
+                    "bounded fit", "narrowing the scan changed the overflowing line");
+
+            for (int final_page = 0; final_page < 2; final_page++) {
+                long long full_end = page_end, bounded_end = page_end;
+                for (int j = 0; j < n; j++) {
+                    const TestRect &r = rects[j];
+                    if (r.h > 0 && r.top >= page_top && (final_page || r.top < page_end))
+                        full_end = std::max(full_end, (long long)r.top + r.h);
+                }
+                int limit = final_page ? n : last;
+                for (int j = first; j < limit; j++) {
+                    const TestRect &r = rects[j];
+                    if (r.h > 0) bounded_end = std::max(bounded_end, (long long)r.top + r.h);
+                }
+                require(full_end == bounded_end,
+                        "bounded render end", "narrowing the scan lost an owned box");
+            }
+        }
+    }
+}
+
 int main() {
+    test_rectangle_search_bounds();
+    test_bounded_scans_match_full_scans();
     test_pagination_trim_at_all_optional_values();
     test_exact_device_pagination_trim();
     test_pagination_trim_guards();

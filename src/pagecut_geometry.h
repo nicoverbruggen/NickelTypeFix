@@ -1,6 +1,20 @@
 #ifndef NTF_PAGECUT_GEOMETRY_H
 #define NTF_PAGECUT_GEOMETRY_H
 
+// The pagination sort orders horizontal rectangles by their top. Keep all boxes with the same
+// top together, including nested inline boxes. Bounds use 64 bits because a line's height can
+// put the start of a search below INT_MIN.
+template <typename Rect>
+static int ntf_pagecut_lower_bound(const Rect *rects, int n, long long top) {
+    int first = 0;
+    while (first < n) {
+        int middle = first + (n - first) / 2;
+        if ((long long)rects[middle].y() < top) first = middle + 1;
+        else n = middle;
+    }
+    return first;
+}
+
 enum ntf_pagecut_refusal_reason {
     NTF_PAGECUT_NOT_A_LINE,
     NTF_PAGECUT_ADVANCE_TOO_SMALL,

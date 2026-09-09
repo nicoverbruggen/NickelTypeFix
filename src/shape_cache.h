@@ -23,6 +23,10 @@ ntf_shape_status_t ntf_shape_cache_enable(void *shape_text, void *shaper_old, vo
 // the small caps post-pass has a place to run. Returns whether the detour went in.
 bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *shaper_ng);
 
+// Avoid repeated preparation of a line whose ordinary text items already have glyphs.
+// Independent of the shaper selector and shaped-result cache. Missing symbols sit this out.
+bool ntf_line_layout_enable(void *shape_line);
+
 #ifdef __cplusplus
 }
 #endif

@@ -76,6 +76,45 @@ static void ntf_fill_justification(const QTextEngine *e, const QScriptItem &si,
 
 static int ntf_install_cache(void *sym, bool ng = false);
 
+typedef void (*NtfShapeLineFn)(QTextEngine *, const QScriptLine &);
+static NtfShapeLineFn ntf_original_shape_line = 0;
+
+// cursorToX calls shapeLine for each measured position. Qt 5.2 walks every item on the line,
+// even when shapeText immediately returns because that item already has glyphs. Without tabs,
+// the accumulated width is unused. Inline objects can resize during shape(), so they must also
+// keep the original path. Inspect the current items on every call; retaining an engine pointer
+// or a previous "ready" result would become stale when Qt clears or rebuilds a layout.
+static bool ntf_line_layout_prepared(const QTextEngine *engine, const QScriptLine &line)
+{
+    if (!engine->layoutData || line.from < 0 || line.length <= 0) return false;
+    int length = engine->layoutData->string.size();
+    if (line.length > length || line.from > length - line.length) return false;
+    int first = engine->findItem(line.from);
+    int last = engine->findItem(line.from + line.length - 1);
+    if (first < 0 || last < first || last >= engine->layoutData->items.size()) return false;
+    const QScriptItem *items = engine->layoutData->items.constData();
+    for (int i = first; i <= last; i++) {
+        if (!items[i].num_glyphs || items[i].analysis.flags >= QScriptAnalysis::TabOrObject)
+            return false;
+    }
+    return true;
+}
+
+static void ntf_prepare_line(QTextEngine *engine, const QScriptLine &line)
+{
+    if (!ntf_line_layout_prepared(engine, line)) ntf_original_shape_line(engine, line);
+}
+
+extern "C" bool ntf_line_layout_enable(void *shape_line)
+{
+    if (!shape_line) return false;
+    void *original = 0;
+    if (ntf_detour_at(shape_line, (void *)&ntf_prepare_line, &original, 0) != 0 || !original)
+        return false;
+    ntf_original_shape_line = (NtfShapeLineFn)original;
+    return true;
+}
+
 typedef int (*ShapeFn)(const QTextEngine *, const QScriptItem &, const ushort *, int,
                        QFontEngine *, const QVector<uint> &, bool);
 static ShapeFn ntf_original_shape = 0;

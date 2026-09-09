@@ -46,6 +46,7 @@ The shaping cache reuses results from the selected shaper. The mod rounds NG’s
 | --- | --- | --: |
 | A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses HarfBuzz NG and caches shaped text. The documented device measurements found roughly twice as fast book opening; the gain depends on the book, font, and device. | **#12** |
 | A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Suppresses scheduled layout during a tracked chapter load, while allowing forced layout to finish the chapter. Short chapters may have no intermediate layout to skip. | **#13** |
+| Nickel pauses 100 ms between chunks while loading a local chapter. | Queues the next EPUB chunk without the fixed delay during a tracked chapter load. Delivery stays asynchronous. | **#15** |
 
 In the [recorded measurements](ABOUT.md#fix-12--slow-chapter-opening--ntf_fast_shaping), switching shapers changed two line breaks in about 1,940; enabling the cache changed none. The layout-skipping test retained the same 121-page table. These are results for the tested chapter, not guarantees for every book. The [ARM regression suite](test/rendering/README.md) compares cached and uncached rendering under each shaper separately.
 
@@ -154,9 +155,10 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_pagecut_trim` | `1` | Fix #9: keep complete lines on one page when their line boxes overlap a page edge. |
 | `ntf_center_images` | `1` | Fix #10: keep a centred image centred when text alignment is set to left. |
 | `ntf_dropcap_fix` | `1` | Fix #11: stop an oversized drop cap pushing the line under it down. |
-| `ntf_fast_shaping` | `1` | Fix #12: use Qt's newer text shaper and remember text it has already shaped. |
+| `ntf_fast_shaping` | `1` | Fix #12: use Qt's newer text shaper, remember shaped text, and skip repeated preparation of ready text lines. |
 | `ntf_skip_parse_layout` | `1` | Fix #13: skip the layout WebKit does mid-parse and then discards. |
 | `ntf_smallcaps` | `1` | Fix #14: use the reading font's own small caps for `font-variant: small-caps`. |
+| `ntf_fast_epub_delivery` | `1` | Fix #15: remove the fixed 100 ms pauses between local EPUB chunks. |
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
@@ -204,9 +206,10 @@ A fix stays off when its required hooks or code checks fail. Features that share
 
 ### Function detours
 
-Fixes #12 through #14 use three detours. Each replaces a function's first eight bytes with a jump into the mod and keeps a callable copy of the displaced instructions in a trampoline:
+Fixes #12 through #14 use four detours. Each replaces a function's first eight bytes with a jump into the mod and keeps a callable copy of the displaced instructions in a trampoline:
 
 - The active `QTextEngine` shaper passes through the shaping cache, justification repair, and small-caps processing.
+- `QTextEngine::shapeLine` skips preparation when every item on the line already has glyphs and none is a tab or inline object.
 - `QTextEngine::fontEngine` supplies the full-size font engine for fonts with real small caps.
 - `WebCore::FrameView::scheduleRelayout` suppresses intermediate layout during a tracked chapter load.
 

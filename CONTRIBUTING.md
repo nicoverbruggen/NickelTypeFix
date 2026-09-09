@@ -26,11 +26,11 @@ Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD
 
 ## Detour installer tests
 
-Run `test/detour/check.sh` on Linux, including inside the build container. It checks real memory mappings and injects installation failures. CI runs it with the other local checks. Building the same test for ARM also executes the replacement and original Thumb functions; the host run checks their bytes and permissions. Device testing must still check startup and all three detoured features.
+Run `test/detour/check.sh` on Linux, including inside the build container. It checks real memory mappings and injects installation failures. CI runs it with the other local checks. Building the same test for ARM also executes the replacement and original Thumb functions; the host run checks their bytes and permissions. Device testing must still check startup and all four detoured functions.
 
 ## Rendering regression tests
 
-Run `test/rendering/check.sh` with Podman or Docker. CI uses the same command. It builds the tests against pinned ARM Qt 5.2.1 and runs both shapers under QEMU, checking the dropdown preview, cache replay, small-caps rendering, and detour installation. The image fetches checksummed public dependencies on its first build; test execution needs no network or device files. See [coverage and runtime details](test/rendering/README.md).
+Run `test/rendering/check.sh` with Podman or Docker. CI uses the same command. It builds the tests against pinned ARM Qt 5.2.1 and runs both shapers under QEMU, checking the dropdown preview, cache replay, line preparation, small-caps rendering, and detour installation. It also checks EPUB delivery callbacks and cancellation. The image fetches checksummed public dependencies on its first build; test execution needs no network or device files. See [coverage and runtime details](test/rendering/README.md).
 
 ## Log rotation tests
 

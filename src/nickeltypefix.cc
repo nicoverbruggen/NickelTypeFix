@@ -14,7 +14,7 @@
 //   9. Page-boundary clipping — paginate with non-overlapping copies of the line boxes, then paint
 //      the complete original boxes with one-page glyph ownership (libnickel)   [ntf_pagecut_trim]
 //      Development builds also log both rect tables and where the walk placed each boundary.
-//  12. Fast text shaping   — switch Qt to HarfBuzz NG and cache shaped runs (libQtGui)  [ntf_fast_shaping]
+//  12. Fast text shaping   — use HarfBuzz NG, cache runs, skip ready-line preparation (libQtGui)  [ntf_fast_shaping]
 //  13. Mid-parse layout    — suppress WebKit's discarded progressive layout during a chapter load,
 //      located by prologue signature in the stripped libQtWebKit   [ntf_skip_parse_layout]
 //  14. Real small caps     — detour QTextEngine::fontEngine and re-shape small caps runs with the
@@ -72,6 +72,7 @@
 #include <QFile>
 #include "config.h"
 #include "shape_cache.h"
+#include "epub_delivery.h"
 #include "detour.h"
 #include "small_caps.h"
 #include "font_dropdown.h"
@@ -181,8 +182,9 @@ ntf_more_spacing:0
 # is the reader shaping the text. Two causes. Qt carries two text shapers and the reader uses the older,
 # slower one; and nothing remembers a word that has already been shaped, so every occurrence of a common
 # word is worked out again from scratch. This selects the newer shaper and remembers each shaped run for
-# the rest of the session. Measured on one long chapter, layout went from about two seconds to half a
-# second. Letters, spacing and line breaks are unchanged. 0 = off.
+# the rest of the session. It also skips repeated preparation of lines whose glyphs are already ready.
+# Measured on one long chapter, the newer shaper and cache reduced layout from about two seconds to
+# half a second. Switching shapers can change spacing or line breaks. 0 = off.
 ntf_fast_shaping:1
 
 # Fix 13 - skip the layout WebKit throws away: while a long chapter is still being read in, WebKit
@@ -192,6 +194,10 @@ ntf_fast_shaping:1
 # chapters long enough to trigger it are affected; short ones never did it and are unchanged. The
 # finished page is identical either way. 0 = off.
 ntf_skip_parse_layout:1
+
+# Fix 15 - EPUB delivery: Nickel pauses 100 ms between chunks of a local chapter. Queue the next
+# chunk without that fixed delay. Delivery stays asynchronous. 0 = keep the original delay.
+ntf_fast_epub_delivery:1
 
 # Fix 14 - real small caps: a book that asks for small capitals (font-variant: small-caps, as
 # Standard Ebooks does for names and chapter openings) gets ordinary capitals shrunk to 70%, which
@@ -230,8 +236,9 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_pagecut_trim",       "1", "Fix 9 - paginate overlapping kepub lines without clipping their glyphs (any font)" },
     { "ntf_center_images",      "1", "Fix 10 - keep a centred image centred when text alignment is set to left" },
     { "ntf_dropcap_fix",        "1", "Fix 11 - stop an oversized drop cap pushing the next line down" },
-    { "ntf_fast_shaping",       "1", "Fix 12 - use Qt's newer text shaper and cache shaped runs, so chapters open faster" },
+    { "ntf_fast_shaping",       "1", "Fix 12 - use Qt's newer shaper, cache shaped runs, and skip repeated preparation of ready lines" },
     { "ntf_skip_parse_layout",  "1", "Fix 13 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
+    { "ntf_fast_epub_delivery", "1", "Fix 15 - deliver local EPUB chunks without the fixed 100 ms pause" },
     { "ntf_smallcaps",          "1", "Fix 14 - use the reading font's own small caps for font-variant: small-caps" },
     { "ntf_more_spacing",       "0", "replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
@@ -1660,12 +1667,14 @@ static void ntf_parse_layout_install(void);   // FIX 13, defined with the rest o
 static void *ntf_qte_shapeText;
 static void *ntf_qte_shaperOld;
 static void *ntf_qte_shaperNG;
+static void *ntf_qte_shapeLine;
 static void *ntf_qte_fontEngine;
 static void (*real_adjustFontFamily)(void *, const QString &) = nullptr;
 static void (*real_labelSetText)(QLabel *, const QString &) = nullptr;
 
 // FIX 12: what ntf_shape_cache_enable() managed to attach, for the startup table.
 static ntf_shape_status_t ntf_shape_status = { false, false };
+static bool ntf_line_layout_ready = false;
 static ntf_smallcaps_status_t ntf_smallcaps_status = { false };
 static bool ntf_smallcaps() { return ntf_global_config_bool("ntf_smallcaps", true); }
 static void ntf_smallcaps_log_line(const char *line) { NTF_DBG("%s", line); }
@@ -1952,8 +1961,11 @@ static int ntf_init() {
             NTF_LOG("Note: fast shaping keeps the stock shaper because the font dropdown repair hook is unavailable.");
         ntf_shape_status = ntf_shape_cache_enable(ntf_qte_shapeText, ntf_qte_shaperOld,
                                                   dropdown_hooks ? ntf_qte_shaperNG : nullptr);
-        NTF_DBG("startup: fast shaping ng=%d cache=%d",
-            ntf_shape_status.ng_enabled, ntf_shape_status.cache_installed);
+        ntf_line_layout_ready = ntf_line_layout_enable(ntf_qte_shapeLine);
+        NTF_DBG("startup: fast shaping ng=%d cache=%d line-layout=%d",
+            ntf_shape_status.ng_enabled, ntf_shape_status.cache_installed, ntf_line_layout_ready);
+        if (!ntf_line_layout_ready)
+            NTF_LOG("Note: the line-layout shortcut could not attach on this firmware; Qt keeps its original line preparation.");
         if (!ntf_shape_status.ng_enabled && dropdown_hooks)
             NTF_LOG("Note: the fast-shaping fix could not find Qt's shaper selector on this firmware, so it is sitting out (other fixes are unaffected).");
         else if (ntf_shape_status.ng_enabled && !ntf_shape_status.cache_installed)
@@ -2502,6 +2514,10 @@ static void ntf_pagecut_finalize_snaps(void *self) {
 
     const QRect *rects = ntf_pagecut_sorted_rects.constData();
     int rect_count = ntf_pagecut_sorted_rects.size();
+    int max_height = 0;
+    for (int i = 0; i < rect_count; i++) {
+        if (rects[i].height() > max_height) max_height = rects[i].height();
+    }
     QVector<QRect> stock_pages(pages + 1);
     int viewport_height = ntf_pagecut_viewport_height;
     int stock_viewport_height = 0;
@@ -2538,7 +2554,12 @@ static void ntf_pagecut_finalize_snaps(void *self) {
         }
         int start = stock.top();
         int snapped = 0;
-        if (ntf_pagecut_snap_boundary(rects, rect_count, start, &snapped)
+        // A box ending at this boundary cannot start earlier than the tallest box allows.
+        // Its overlapping peer must start later than it and before the boundary. Both are
+        // therefore inside this slice, even for tall images and nested inline boxes.
+        int first = ntf_pagecut_lower_bound(rects, rect_count, (long long)start - max_height);
+        int last = ntf_pagecut_lower_bound(rects, rect_count, start);
+        if (ntf_pagecut_snap_boundary(rects + first, last - first, start, &snapped)
             && snapped > ntf_pagecut_snapped_starts[page - 1]) {
             start = snapped;
             corrected[page] = true;
@@ -2565,7 +2586,10 @@ static void ntf_pagecut_finalize_snaps(void *self) {
     for (int page = 1; page < pages; page++) {
         if (!corrected[page]) continue;      // nothing moved this start; leave stock alone
         int fitted = 0;
-        if (ntf_pagecut_fit_boundary(fit_data, fit_count,
+        // The fit guard accepts candidates and peers only within this page's ownership interval.
+        int first = ntf_pagecut_lower_bound(fit_data, fit_count, ntf_pagecut_snapped_starts[page]);
+        int last = ntf_pagecut_lower_bound(fit_data, fit_count, ntf_pagecut_snapped_starts[page + 1]);
+        if (ntf_pagecut_fit_boundary(fit_data + first, last - first,
                                      ntf_pagecut_snapped_starts[page],
                                      ntf_pagecut_snapped_starts[page + 1],
                                      viewport_height, &fitted)
@@ -2583,7 +2607,9 @@ static void ntf_pagecut_finalize_snaps(void *self) {
             ? ntf_pagecut_snapped_starts[page + 1]
             : (long long)stock_pages[page].bottom() + 1;
         long long render_end = owned_end;
-        for (int i = 0; i < rect_count; i++) {
+        int first = ntf_pagecut_lower_bound(rects, rect_count, page_top);
+        int last = page < pages ? ntf_pagecut_lower_bound(rects, rect_count, owned_end) : rect_count;
+        for (int i = first; i < last; i++) {
             long long top = rects[i].y();
             long long height = rects[i].height();
             if (height <= 0 || top < page_top || (page < pages && top >= owned_end)) continue;
@@ -2941,6 +2967,7 @@ static long ntf_chapter_load_ms = 0;           // when it opened, for the wall-c
 static unsigned long ntf_relayout_skipped = 0, ntf_relayout_passed = 0;
 
 static bool ntf_skip_parse_layout() { return ntf_global_config_bool("ntf_skip_parse_layout", true); }
+static bool ntf_fast_epub_delivery() { return ntf_global_config_bool("ntf_fast_epub_delivery", true); }
 
 static long ntf_monotonic_ms(void) {
     struct timespec ts;
@@ -2999,10 +3026,17 @@ static void ntf_parse_layout_install(void) {
 // Open the window. Four void* arguments rather than the real two: the extra pair is read from and
 // written back to r2/r3 untouched, which costs nothing and keeps the shim register-preserving.
 static void *(*real_kbrb_startChapterLoad)(void *, void *, void *, void *) = nullptr;
+static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
+static void (*real_qtimer_singleShotImpl)(int, Qt::TimerType, const QObject *, void *) = nullptr;
+
+static bool ntf_epub_delivery_ready() {
+    return real_qtimer_singleShotImpl && real_kbrb_startChapterLoad && real_kbrb_loadFinished;
+}
 
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kbrb_startChapterLoad(void *a0, void *a1, void *a2, void *a3) {
-    if (ntf_parse_layout_ready && ntf_on_qt_thread()) {
+    if (ntf_enabled() && ntf_on_qt_thread()
+        && (ntf_parse_layout_ready || (ntf_fast_epub_delivery() && ntf_epub_delivery_ready()))) {
         ntf_in_chapter_load = true;
         ntf_chapter_load_ms = ntf_monotonic_ms();
         ntf_relayout_skipped = 0;
@@ -3011,9 +3045,6 @@ void *_ntf_kbrb_startChapterLoad(void *a0, void *a1, void *a2, void *a3) {
     if (!real_kbrb_startChapterLoad) return nullptr;
     return real_kbrb_startChapterLoad(a0, a1, a2, a3);
 }
-
-static void (*real_kbrb_loadFinished)(void *, bool) = nullptr;
-
 
 extern "C" __attribute__((visibility("default")))
 void _ntf_kbrb_loadFinished(void *self, bool ok) {
@@ -3027,6 +3058,20 @@ void _ntf_kbrb_loadFinished(void *self, bool ok) {
         ntf_run_page_script(ntf_kepub_reader_view, ntf_center_images(), ntf_dropcap_fix(), false);
     if (real_kbrb_loadFinished) real_kbrb_loadFinished(self, ok);
 
+}
+
+// FIX 15: EpubNetworkReply feeds a local chapter to WebKit in chunks. Between chunks it queues
+// a callback with a 100 ms delay. Zero still queues that callback through Qt; calling the slot
+// directly would change reentrancy and could outlive a destroyed reply. Hook only Nickel's import,
+// retain the original receiver and slot, and leave every other timer unchanged.
+extern "C" __attribute__((visibility("default")))
+void _ntf_qtimer_singleShotImpl(int interval, Qt::TimerType type, const QObject *receiver, void *slot) {
+    if (!real_qtimer_singleShotImpl) return;
+    bool loading = ntf_enabled() && ntf_fast_epub_delivery() && ntf_epub_delivery_ready()
+        && ntf_on_qt_thread() && ntf_parse_window_open();
+    int adjusted = ntf_epub_delivery_interval(loading, interval, receiver);
+    if (adjusted != interval) NTF_DBG("EPUB delivery: queued the next chunk without the 100 ms pause.");
+    real_qtimer_singleShotImpl(adjusted, type, receiver, slot);
 }
 
 
@@ -3248,6 +3293,10 @@ void _ntf_lineHeightScalars(QList<double> *sret, const void *self) {
 
 
 static struct nh_hook NickelTypeFixHooks[] = {
+    { .sym = "_ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE",
+      .sym_new = "_ntf_qtimer_singleShotImpl", .lib = "libnickel.so.1.0.0",
+      .out = nh_symoutptr(real_qtimer_singleShotImpl), .desc = "fix 15: remove the EPUB chunk-delivery pause", .optional = true },
+    //nb hook libnickel 4.23.15505 * _ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE
     { .sym = "_ZNK15ReadingSettings17lineHeightScalarsEv", .sym_new = "_ntf_lineHeightScalars",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_lineHeightScalars),
       .desc = "optional 24-value line-spacing slider", .optional = true },
@@ -3370,6 +3419,8 @@ static struct nh_dlsym NickelTypeFixDlsym[] = {
     //nb lookup * 4.23.15505 * _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
     { .name = "_ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb", .out = nh_symoutptr(ntf_qte_shaperNG), .desc = "fix 12: HarfBuzz NG, the fast shaper", .optional = true },
     //nb lookup * 4.23.15505 * _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
+    { .name = "_ZN11QTextEngine9shapeLineERK11QScriptLine", .out = nh_symoutptr(ntf_qte_shapeLine), .desc = "fix 12: skip repeated preparation of ready text lines", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN11QTextEngine9shapeLineERK11QScriptLine
     { .name = "_ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_", .out = nh_symoutptr(ntf_qte_fontEngine), .desc = "fix 14: the engine chosen per text item", .optional = true },
     //nb lookup * 4.23.15505 * _ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_
     // NOTE: an earlier revision resolved `_ZThn24_N15KepubBookReaderD1Ev` here and treated its
@@ -3536,6 +3587,8 @@ static void ntf_log_unavailable_fixes() {
         NTF_LOG("Note: the page-boundary clipping fix could not attach completely on this firmware, so it is sitting out (other fixes are unaffected).");
     if (ntf_skip_parse_layout() && !(ntf_parse_layout_ready && real_kbrb_startChapterLoad))
         NTF_LOG("Note: the mid-parse layout fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
+    if (ntf_fast_epub_delivery() && !ntf_epub_delivery_ready())
+        NTF_LOG("Note: the EPUB delivery fix could not attach completely on this firmware, so the original chunk delays remain active.");
     if ((ntf_center_images() || ntf_dropcap_fix()) && !ntf_page_inspection_ready())
         NTF_LOG("Note: the page-inspection fixes could not attach completely on this firmware, so they are sitting out (other fixes are unaffected).");
 }
@@ -3570,6 +3623,8 @@ static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker) {
     ntf_log_fix_row("Centered images", ntf_center_images(), ntf_page_inspection_ready());
     ntf_log_fix_row("Drop caps", ntf_dropcap_fix(), ntf_page_inspection_ready());
     ntf_log_fix_row("Fast text shaping", ntf_fast_shaping(), ntf_shape_status.ng_enabled);
+    ntf_log_fix_row("Line layout", ntf_fast_shaping(), ntf_line_layout_ready);
+    ntf_log_fix_row("EPUB delivery", ntf_fast_epub_delivery(), ntf_epub_delivery_ready());
     ntf_log_fix_row("Small caps", ntf_smallcaps(), ntf_smallcaps_status.installed);
     ntf_log_fix_row("Mid-parse layout", ntf_skip_parse_layout(),
         ntf_parse_layout_ready && real_kbrb_startChapterLoad);
