@@ -357,7 +357,11 @@ where the untouched work is a larger share of the total.
 
 **4.3x on relayout**, of which the shaper switch is 60% and the cache a further 17%. The cache costs about 1.3 MB for a chapter's worth of records. Switching shapers moves two line breaks in about 1,940; the cache moves none, and both were verified to render pixel-identical to their own baseline.
 
-**What this does not do.** It does not touch Fix 2's vertical pages, which run on WebKit's simple path and are never shaped. Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.
+**Vertical font compatibility.** Kobo's simple text path calls `QRawFont::hasVerticalGlyphs` and `QRawFont::substituteWithVerticalVariants` through WebKit's PLT. Both pass the engine's HarfBuzz face to Kobo's vertical-font plugin, which expects a legacy `HB_FaceRec`. The process-wide NG flag changes that shared face slot to an incompatible `hb_face_t`. The resulting mismatch breaks vertical substitutions even after Fix 2 selects the simple path.
+
+The mod hooks those two calls and supplies a separate legacy face built from the same font tables. Qt keeps its NG face and selector unchanged. Each thread retains up to eight legacy faces, with a `QRawFont` keeping each engine alive until its legacy face is freed. If a font or plugin is unavailable, the adapter leaves glyphs unchanged. If either hook or any required face-management symbol is missing at startup, fast shaping keeps the stock shaper and can still cache it.
+
+**Other fixes.** Fixes 3, 5 and 7 stay in place and keep working, since they act on `justify` and on font files rather than on the shaper, and they are what the reader falls back to if this fix sits out.
 
 ## Fix 13 — Long chapters laid out twice · `ntf_skip_parse_layout`
 

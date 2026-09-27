@@ -2,6 +2,10 @@
 
 ## v0.11
 
+### Fixed
+
+- Restored vertical Japanese glyph forms with fast shaping enabled. Brackets, long-vowel marks and punctuation now use the correct vertical variants.
+
 ### Added
 
 - Long chapters load without Nickel's fixed 100 ms pauses between local EPUB chunks. Set `ntf_fast_epub_delivery:0` to keep those pauses.

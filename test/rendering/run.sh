@@ -31,6 +31,7 @@ compile_qt "$repo/test/font-dropdown/font_dropdown_test.cc" "$repo/src/font_drop
     -o "$work/font-dropdown"
 compile_qt "$repo/test/rendering/shaping_test.cc" "$repo/src/detour.cc" \
     -o "$work/shaping"
+compile_qt "$repo/test/rendering/vertical_font_test.cc" -o "$work/vertical-font"
 compile_qt "$repo/test/rendering/epub_delivery_test.cc" -o "$work/epub-delivery"
 "$cxx" -std=c++11 -mthumb -Wall -Wextra -Werror "$repo/test/detour/detour_test.cc" -o "$work/detour"
 printf '%s\n' 'void nh_log(const char *fmt, ...);' > "$work/NickelHook.h"
@@ -51,6 +52,7 @@ run_arm "$work/logging"
 run_arm "$work/epub-delivery"
 for shaper in ng old; do
     export QT_HARFBUZZ="$shaper"
+    run_arm "$work/vertical-font" "$fonts/Vollkorn-Regular.ttf"
     run_arm "$work/font-dropdown" "$fonts/Vollkorn-Regular.ttf" "$fonts/NotoSans-Regular.ttf"
     run_arm "$work/shaping" "$fonts" cache
     run_arm "$work/shaping" "$fonts" small-caps

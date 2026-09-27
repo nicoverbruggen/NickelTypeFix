@@ -15,6 +15,8 @@ _ntf_qwf_render
 _ntf_qwp_setViewportSize
 _ntf_qws_setAttribute
 _ntf_qws_setFontFamily
+_ntf_rawHasVerticalGlyphs
+_ntf_rawSubstituteVertical
 _ntf_setText
 _ntf_wk_scheduleRelayout
 _ntf_wv_addCssToHtml
@@ -30,6 +32,7 @@ _ZN10WebkitView12addCssToHtmlE7QString
 _ZN10WebkitView14setCurrentPageEi
 _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
 _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
+_ZN11QFontEngine15pluginInterfaceE
 _ZN11QTextEngine9shapeLineERK11QScriptLine
 _ZN12QWebSettings12setAttributeENS_12WebAttributeEb
 _ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString
@@ -58,6 +61,8 @@ _ZNK11QTextEngine9shapeTextEi
 _ZNK12QWebSettings17userStyleSheetUrlEv
 _ZNK13CustomWebView8settingsEv
 _ZNK15ReadingSettings17lineHeightScalarsEv
+_ZNK8QRawFont17hasVerticalGlyphsEv
+_ZNK8QRawFont30substituteWithVerticalVariantsEPjj
 _ZNK8QWebPage15setViewportSizeERK5QSize
 
 [target libraries]
@@ -110,5 +115,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  326
-sha256 1c6554932668e16d52b028b146d0b5f5288ab2a220c2e3bbef46256b8a5a1c56
+count  332
+sha256 3379a52271811f1986147cb3ec66d376f44adf2a2ea402486446774e1676f2fa

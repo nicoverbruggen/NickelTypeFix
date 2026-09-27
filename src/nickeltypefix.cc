@@ -72,6 +72,7 @@
 #include <QFile>
 #include "config.h"
 #include "shape_cache.h"
+#include "vertical_font.h"
 #include "epub_delivery.h"
 #include "detour.h"
 #include "small_caps.h"
@@ -1665,6 +1666,12 @@ static void ntf_parse_layout_install(void);   // FIX 13, defined with the rest o
 // FIX 12: the three QTextEngine symbols the fix reads. shapeText is disassembled to find Qt's
 // shaper selector; the two shapers are the detour targets.
 static void *ntf_qte_shapeText;
+static void *ntf_hb_new_face;
+static void *ntf_hb_load_face;
+static void *ntf_hb_free_face;
+static void *ntf_font_engine_interface;
+static bool (*real_rawHasVerticalGlyphs)(const QRawFont *) = nullptr;
+static unsigned (*real_rawSubstituteVertical)(const QRawFont *, unsigned *, unsigned) = nullptr;
 static void *ntf_qte_shaperOld;
 static void *ntf_qte_shaperNG;
 static void *ntf_qte_shapeLine;
@@ -1679,6 +1686,21 @@ static ntf_smallcaps_status_t ntf_smallcaps_status = { false };
 static bool ntf_smallcaps() { return ntf_global_config_bool("ntf_smallcaps", true); }
 static void ntf_smallcaps_log_line(const char *line) { NTF_DBG("%s", line); }
 static bool ntf_fast_shaping() { return ntf_global_config_bool("ntf_fast_shaping", true); }
+
+
+// Kobo's vertical plugin accepts legacy HB_Face objects. Qt's NG selector changes the
+// engine's shared face slot to hb_face_t, so these two calls need their own legacy face.
+extern "C" __attribute__((visibility("default")))
+bool _ntf_rawHasVerticalGlyphs(const QRawFont *font) {
+    if (ntf_shape_status.ng_enabled) return ntf_vertical_font_has_glyphs(*font);
+    return real_rawHasVerticalGlyphs(font);
+}
+
+extern "C" __attribute__((visibility("default")))
+unsigned _ntf_rawSubstituteVertical(const QRawFont *font, unsigned *glyphs, unsigned count) {
+    if (ntf_shape_status.ng_enabled) return ntf_vertical_font_substitute(*font, glyphs, count);
+    return real_rawSubstituteVertical(font, glyphs, count);
+}
 
 
 
@@ -1959,14 +1981,20 @@ static int ntf_init() {
         const bool dropdown_hooks = real_adjustFontFamily && real_labelSetText;
         if (!dropdown_hooks)
             NTF_LOG("Note: fast shaping keeps the stock shaper because the font dropdown repair hook is unavailable.");
+        const bool vertical_hooks = real_rawHasVerticalGlyphs && real_rawSubstituteVertical
+            && ntf_vertical_font_prepare(ntf_hb_new_face, ntf_hb_load_face, ntf_hb_free_face,
+                                         ntf_font_engine_interface);
+        if (!vertical_hooks)
+            NTF_LOG("Note: fast shaping keeps the stock shaper because the vertical-font repair is unavailable.");
+        const bool ng_ready = dropdown_hooks && vertical_hooks;
         ntf_shape_status = ntf_shape_cache_enable(ntf_qte_shapeText, ntf_qte_shaperOld,
-                                                  dropdown_hooks ? ntf_qte_shaperNG : nullptr);
+                                                  ng_ready ? ntf_qte_shaperNG : nullptr);
         ntf_line_layout_ready = ntf_line_layout_enable(ntf_qte_shapeLine);
         NTF_DBG("startup: fast shaping ng=%d cache=%d line-layout=%d",
             ntf_shape_status.ng_enabled, ntf_shape_status.cache_installed, ntf_line_layout_ready);
         if (!ntf_line_layout_ready)
             NTF_LOG("Note: the line-layout shortcut could not attach on this firmware; Qt keeps its original line preparation.");
-        if (!ntf_shape_status.ng_enabled && dropdown_hooks)
+        if (!ntf_shape_status.ng_enabled && ng_ready)
             NTF_LOG("Note: the fast-shaping fix could not find Qt's shaper selector on this firmware, so it is sitting out (other fixes are unaffected).");
         else if (ntf_shape_status.ng_enabled && !ntf_shape_status.cache_installed)
             NTF_LOG("Note: the fast-shaping fix switched to the newer shaper but could not install its cache, so chapters open faster but not as fast as they could.");
@@ -3293,6 +3321,14 @@ void _ntf_lineHeightScalars(QList<double> *sret, const void *self) {
 
 
 static struct nh_hook NickelTypeFixHooks[] = {
+    { .sym = "_ZNK8QRawFont17hasVerticalGlyphsEv", .sym_new = "_ntf_rawHasVerticalGlyphs",
+      .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_rawHasVerticalGlyphs),
+      .desc = "fix 12: use a legacy face for vertical glyph detection", .optional = true },
+    //nb hook libQtWebKit 4.23.15505 * _ZNK8QRawFont17hasVerticalGlyphsEv
+    { .sym = "_ZNK8QRawFont30substituteWithVerticalVariantsEPjj", .sym_new = "_ntf_rawSubstituteVertical",
+      .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_rawSubstituteVertical),
+      .desc = "fix 12: use a legacy face for vertical glyph substitution", .optional = true },
+    //nb hook libQtWebKit 4.23.15505 * _ZNK8QRawFont30substituteWithVerticalVariantsEPjj
     { .sym = "_ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE",
       .sym_new = "_ntf_qtimer_singleShotImpl", .lib = "libnickel.so.1.0.0",
       .out = nh_symoutptr(real_qtimer_singleShotImpl), .desc = "fix 15: remove the EPUB chunk-delivery pause", .optional = true },
@@ -3395,6 +3431,14 @@ static struct nh_hook NickelTypeFixHooks[] = {
     {0},
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
+    { .name = "qHBNewFace", .out = nh_symoutptr(ntf_hb_new_face), .desc = "fix 12: create legacy font faces", .optional = true },
+    //nb lookup * 4.23.15505 * qHBNewFace
+    { .name = "qHBLoadFace", .out = nh_symoutptr(ntf_hb_load_face), .desc = "fix 12: load legacy font faces", .optional = true },
+    //nb lookup * 4.23.15505 * qHBLoadFace
+    { .name = "qHBFreeFace", .out = nh_symoutptr(ntf_hb_free_face), .desc = "fix 12: free legacy font faces", .optional = true },
+    //nb lookup * 4.23.15505 * qHBFreeFace
+    { .name = "_ZN11QFontEngine15pluginInterfaceE", .out = nh_symoutptr(ntf_font_engine_interface), .desc = "fix 12: reach the vertical plugin for legacy font faces", .optional = true },
+    //nb lookup * 4.23.15505 * _ZN11QFontEngine15pluginInterfaceE
     { .name = "_Z26writingDirectionFromStringRK7QString", .out = nh_symoutptr(ntf_writingDirectionFromString), .desc = "derive vertical enum ints", .optional = true },
     //nb lookup * 4.23.15505 * _Z26writingDirectionFromStringRK7QString
     { .name = "_ZNK13CustomWebView8settingsEv", .out = nh_symoutptr(ntf_cwv_settings), .desc = "reach the page's QWebSettings", .optional = true },
