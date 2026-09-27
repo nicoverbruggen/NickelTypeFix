@@ -2585,33 +2585,33 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZNK8QRawFont17hasVerticalGlyphsEv", .sym_new = "_ntf_rawHasVerticalGlyphs",
       .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_rawHasVerticalGlyphs),
       .desc = "fix 12: use a legacy face for vertical glyph detection", .optional = true },
-    //nb hook libQtWebKit 4.23.15505 * _ZNK8QRawFont17hasVerticalGlyphsEv
+    //nb hook libQtWebKit 4.21.15015 * _ZNK8QRawFont17hasVerticalGlyphsEv
     { .sym = "_ZNK8QRawFont30substituteWithVerticalVariantsEPjj", .sym_new = "_ntf_rawSubstituteVertical",
       .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_rawSubstituteVertical),
       .desc = "fix 12: use a legacy face for vertical glyph substitution", .optional = true },
-    //nb hook libQtWebKit 4.23.15505 * _ZNK8QRawFont30substituteWithVerticalVariantsEPjj
+    //nb hook libQtWebKit 4.21.15015 * _ZNK8QRawFont30substituteWithVerticalVariantsEPjj
     { .sym = "_ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE",
       .sym_new = "_ntf_qtimer_singleShotImpl", .lib = "libnickel.so.1.0.0",
       .out = nh_symoutptr(real_qtimer_singleShotImpl), .desc = "fix 15: remove the EPUB chunk-delivery pause", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE
+    //nb hook libnickel 4.21.15015 * _ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE
     { .sym = "_ZNK15ReadingSettings17lineHeightScalarsEv", .sym_new = "_ntf_lineHeightScalars",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_lineHeightScalars),
       .desc = "optional 24-value line-spacing slider", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZNK15ReadingSettings17lineHeightScalarsEv
+    //nb hook libnickel 4.21.15015 * _ZNK15ReadingSettings17lineHeightScalarsEv
     // FIX 10/11: correct the chapter before loadFinished paginates it.
     { .sym = "_ZN19KepubBookReaderBase12loadFinishedEb", .sym_new = "_ntf_kbrb_loadFinished",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_loadFinished),
       .desc = "fix 10/11: correct page before pagination", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase12loadFinishedEb
+    //nb hook libnickel 4.21.15015 * _ZN19KepubBookReaderBase12loadFinishedEb
     // FIX 13: open the chapter-load window; loadFinished closes it.
     { .sym = "_ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover", .sym_new = "_ntf_kbrb_startChapterLoad",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_kbrb_startChapterLoad),
       .desc = "fix 13: open the chapter-load window", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
+    //nb hook libnickel 4.21.15015 * _ZN19KepubBookReaderBase16startChapterLoadERK10Shortcover
     // FIX 1 — now OPTIONAL so a missing FT symbol only sits out hinting (independence).
     { .sym = "FT_Load_Glyph", .sym_new = "_ntf_FT_Load_Glyph", .lib = NTF_LIBKOBO,
       .out = nh_symoutptr(real_FT_Load_Glyph), .desc = "load glyphs unhinted", .optional = true },
-    //nb hook libkobo 4.23.15505 * FT_Load_Glyph
+    //nb hook libkobo 4.21.15015 * FT_Load_Glyph
     // FIX 2 — optional.
     { .sym = "_ZN13CustomWebView19setWritingDirectionE16WritingDirection", .sym_new = "_ntf_cwv_setWritingDirection",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setWritingDirection), .desc = "inject text-rendering:auto for vertical books", .optional = true },
@@ -2628,19 +2628,19 @@ static struct nh_hook NickelTypeFixHooks[] = {
     { .sym = "_ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString", .sym_new = "_ntf_qws_setFontFamily",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_qws_setFontFamily),
       .desc = "record how the reader configures its view", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString
+    //nb hook libnickel 4.21.15015 * _ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString
     { .sym = "_ZN12QWebSettings12setAttributeENS_12WebAttributeEb", .sym_new = "_ntf_qws_setAttribute",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_qws_setAttribute),
       .desc = "record how the reader configures its view", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN12QWebSettings12setAttributeENS_12WebAttributeEb
+    //nb hook libnickel 4.21.15015 * _ZN12QWebSettings12setAttributeENS_12WebAttributeEb
     { .sym = "_ZNK8QWebPage15setViewportSizeERK5QSize", .sym_new = "_ntf_qwp_setViewportSize",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_qwp_setViewportSize),
       .desc = "record the reader's viewport", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZNK8QWebPage15setViewportSizeERK5QSize
+    //nb hook libnickel 4.21.15015 * _ZNK8QWebPage15setViewportSizeERK5QSize
     { .sym = "_ZN13CustomWebView15setViewportSizeE5QSize", .sym_new = "_ntf_cwv_setViewportSize",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_cwv_setViewportSize),
       .desc = "record the reader's viewport", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN13CustomWebView15setViewportSizeE5QSize
+    //nb hook libnickel 4.21.15015 * _ZN13CustomWebView15setViewportSizeE5QSize
     { .sym = "_ZN10WebkitView12addCssToHtmlE7QString", .sym_new = "_ntf_wv_addCssToHtml",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_addCssToHtml), .desc = "arm reader-font re-apply", .optional = true },
     //nb hook libnickel 4.21.15015 * _ZN10WebkitView12addCssToHtmlE7QString
@@ -2654,13 +2654,13 @@ static struct nh_hook NickelTypeFixHooks[] = {
     // checks that import directly rather than looking for a definition in libnickel.
     { .sym = "_ZN13QFontDatabase18addApplicationFontERK7QString", .sym_new = "_ntf_addApplicationFont",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_addApplicationFont), .desc = "fix 7: strip cpsp per font at load", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN13QFontDatabase18addApplicationFontERK7QString
+    //nb hook libnickel 4.21.15015 * _ZN13QFontDatabase18addApplicationFontERK7QString
     { .sym = "_ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString", .sym_new = "_ntf_adjustFontFamily",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_adjustFontFamily), .desc = "fix 12: refresh the font preview after font reload", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
+    //nb hook libnickel 4.21.15015 * _ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
     { .sym = "_ZN6QLabel7setTextERK7QString", .sym_new = "_ntf_setText",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_labelSetText), .desc = "fix 12: retain the font preview during reload", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN6QLabel7setTextERK7QString
+    //nb hook libnickel 4.21.15015 * _ZN6QLabel7setTextERK7QString
     // FIX 9 — page-boundary clipping. Both optional; a missing symbol sits the fix out.
     // locatePages brackets each pagination pass, which is the only place the reader's own view can
     // be identified; sortRectsByStart is a static function (no `this`) carrying the line rects the
@@ -2676,7 +2676,7 @@ static struct nh_hook NickelTypeFixHooks[] = {
     //nb hook libnickel 4.21.15015 * _ZNK10WebkitView8pageRectEi
     { .sym = "_ZN9QWebFrame6renderEP8QPainterRK7QRegion", .sym_new = "_ntf_qwf_render",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_qwf_render), .desc = "fix 9: bracket the reader paint", .optional = true },
-    //nb hook libnickel 4.23.15505 * _ZN9QWebFrame6renderEP8QPainterRK7QRegion
+    //nb hook libnickel 4.21.15015 * _ZN9QWebFrame6renderEP8QPainterRK7QRegion
     { .sym = "_ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb", .sym_new = "_ntf_qp_drawGlyphRun",
       .lib = "libQt5WebKit.so.5", .out = nh_symoutptr(real_qp_drawGlyphRun), .desc = "fix 9: keep each glyph run on its owning page", .optional = true },
     //nb hook libQtWebKit 4.21.15015 * _ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb
@@ -2684,41 +2684,41 @@ static struct nh_hook NickelTypeFixHooks[] = {
 };
 static struct nh_dlsym NickelTypeFixDlsym[] = {
     { .name = "qHBNewFace", .out = nh_symoutptr(ntf_hb_new_face), .desc = "fix 12: create legacy font faces", .optional = true },
-    //nb lookup * 4.23.15505 * qHBNewFace
+    //nb lookup * 4.21.15015 * qHBNewFace
     { .name = "qHBLoadFace", .out = nh_symoutptr(ntf_hb_load_face), .desc = "fix 12: load legacy font faces", .optional = true },
-    //nb lookup * 4.23.15505 * qHBLoadFace
+    //nb lookup * 4.21.15015 * qHBLoadFace
     { .name = "qHBFreeFace", .out = nh_symoutptr(ntf_hb_free_face), .desc = "fix 12: free legacy font faces", .optional = true },
-    //nb lookup * 4.23.15505 * qHBFreeFace
+    //nb lookup * 4.21.15015 * qHBFreeFace
     { .name = "_ZN11QFontEngine15pluginInterfaceE", .out = nh_symoutptr(ntf_font_engine_interface), .desc = "fix 12: reach the vertical plugin for legacy font faces", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN11QFontEngine15pluginInterfaceE
+    //nb lookup * 4.21.15015 * _ZN11QFontEngine15pluginInterfaceE
     { .name = "_Z26writingDirectionFromStringRK7QString", .out = nh_symoutptr(ntf_writingDirectionFromString), .desc = "derive vertical enum ints", .optional = true },
-    //nb lookup * 4.23.15505 * _Z26writingDirectionFromStringRK7QString
+    //nb lookup * 4.21.15015 * _Z26writingDirectionFromStringRK7QString
     { .name = "_ZNK13CustomWebView8settingsEv", .out = nh_symoutptr(ntf_cwv_settings), .desc = "reach the page's QWebSettings", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK13CustomWebView8settingsEv
+    //nb lookup * 4.21.15015 * _ZNK13CustomWebView8settingsEv
     { .name = "_ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl", .out = nh_symoutptr(ntf_setUserStyleSheetUrl), .desc = "set/clear the user stylesheet", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
+    //nb lookup * 4.21.15015 * _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
     { .name = "_ZNK12QWebSettings17userStyleSheetUrlEv", .out = nh_symoutptr(ntf_getUserStyleSheetUrl), .desc = "read the slot back before touching it", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK12QWebSettings17userStyleSheetUrlEv
+    //nb lookup * 4.21.15015 * _ZNK12QWebSettings17userStyleSheetUrlEv
     { .name = "_ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString", .out = nh_symoutptr(ntf_wv_evaluateJavaScript), .desc = "fix 10/11: inspect the laid-out page", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
+    //nb lookup * 4.21.15015 * _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
     { .name = "_ZNK10WebkitView7webViewEv", .out = nh_symoutptr(ntf_wv_webView), .desc = "map a WebkitView to its CustomWebView", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK10WebkitView7webViewEv
+    //nb lookup * 4.21.15015 * _ZNK10WebkitView7webViewEv
     { .name = "_ZN15KepubBookReader12pageStyleCssEb", .out = nh_symoutptr(ntf_pageStyleCss), .desc = "fix 6: rebuild reader-font CSS", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN15KepubBookReader12pageStyleCssEb
+    //nb lookup * 4.21.15015 * _ZN15KepubBookReader12pageStyleCssEb
     { .name = "_ZN15KepubBookReader12addCssToHtmlE7QString", .out = nh_symoutptr(ntf_kbr_addCssToHtml), .desc = "fix 6: re-inject reader-font CSS", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN15KepubBookReader12addCssToHtmlE7QString
+    //nb lookup * 4.21.15015 * _ZN15KepubBookReader12addCssToHtmlE7QString
     { .name = "_ZNK10WebkitView10totalPagesEv", .out = nh_symoutptr(ntf_wv_totalPages), .desc = "fix 9: read the finished page count", .optional = true },
     //nb lookup * 4.21.15015 * _ZNK10WebkitView10totalPagesEv
     { .name = "_ZNK11QTextEngine9shapeTextEi", .out = nh_symoutptr(ntf_qte_shapeText), .desc = "fix 12: locate Qt's shaper selector", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK11QTextEngine9shapeTextEi
+    //nb lookup * 4.21.15015 * _ZNK11QTextEngine9shapeTextEi
     { .name = "_ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb", .out = nh_symoutptr(ntf_qte_shaperOld), .desc = "fix 12: the old shaper, cached if NG is unavailable", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
+    //nb lookup * 4.21.15015 * _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
     { .name = "_ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb", .out = nh_symoutptr(ntf_qte_shaperNG), .desc = "fix 12: HarfBuzz NG, the fast shaper", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
+    //nb lookup * 4.21.15015 * _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
     { .name = "_ZN11QTextEngine9shapeLineERK11QScriptLine", .out = nh_symoutptr(ntf_qte_shapeLine), .desc = "fix 12: skip repeated preparation of ready text lines", .optional = true },
-    //nb lookup * 4.23.15505 * _ZN11QTextEngine9shapeLineERK11QScriptLine
+    //nb lookup * 4.21.15015 * _ZN11QTextEngine9shapeLineERK11QScriptLine
     { .name = "_ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_", .out = nh_symoutptr(ntf_qte_fontEngine), .desc = "fix 14: the engine chosen per text item", .optional = true },
-    //nb lookup * 4.23.15505 * _ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_
+    //nb lookup * 4.21.15015 * _ZNK11QTextEngine10fontEngineERK11QScriptItemP6QFixedS4_S4_
     // NOTE: an earlier revision resolved `_ZThn24_N15KepubBookReaderD1Ev` here and treated its
     // existence as proof that WebkitView is the +24 subobject. That thunk belongs to a different
     // base at +24; the view offset is learned per book instead (ntf_learn_reader_view).

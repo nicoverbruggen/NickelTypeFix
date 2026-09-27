@@ -55,7 +55,7 @@ The mod attaches in more than one place, so there are two compatibility checks:
 - **Hooks and lookups.** Each target carries a `//nb <kind> <role|*> <first> <last|*> <symbol>...` annotation. `nickelbench check-source src` verifies every annotation against the recent Kobo 4.x compatibility database bundled in the build image. Hook checks require the expected PLT relocation in the named library. Lookup checks require an exported definition in one of the recorded process libraries. CI runs this after building the mod.
 - **Byte patches.** The justification and letter-spacing fixes edit instructions in memory. `test/anchors` (CI job `anchors`) confirms, against real firmware, that every anchor is present and unique and that the expected original bytes sit at each edit offset. A firmware that lacks the pattern is reported as "sits out" and does not fail; an ambiguous match or differing original bytes is a hard failure.
 
-The floor is firmware 4.23.15505. Every hook and lookup is `.optional`, so a missing symbol sits one fix out rather than failing the mod. Targets Kobo 4.x only; 5.x (Qt 6 / Chromium) is out of scope and the mod stays inert there.
+The floor is firmware 4.21.15015. Every hook and lookup is `.optional`, so a missing symbol skips that target rather than failing the mod. Dependent fixes either sit out or keep their stock behavior. The floor is a support policy, not a runtime version gate. Matching targets do not prove that the reader behavior is unchanged. Targets Kobo 4.x only; 5.x (Qt 6 / Chromium) is out of scope and the mod stays inert there.
 
 ## Pull requests
 

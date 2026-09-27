@@ -13,6 +13,7 @@
 
 ### Improved
 
+- Lowered the supported firmware floor to 4.21.15015 after compatibility and rendering checks. The smallest optional line spacing still has a page-edge clipping limitation on this firmware.
 - Removed the development-only page and page-boundary probes. The fixes and normal diagnostic logging are unchanged.
 - The unexpected-thread warning names the caller and clarifies that the fix is skipped for that call.
 - Reduced chapter layout work by skipping Qt's repeated preparation of text lines whose glyphs are already ready.

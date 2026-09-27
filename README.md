@@ -5,7 +5,7 @@ NickelTypeFix fixes text rendering on Kobo eReaders and reduces the work needed 
 Each fix has a configuration switch. Missing hooks or incompatible code patterns disable the affected fixes. See [Safety](#safety) for the checks and their limits.
 
 > [!IMPORTANT]
-> Requires **Kobo firmware 4.23.15505 or later in the 4.x series**. Firmware 5.x is unsupported for now.
+> Supports **Kobo firmware 4.21.15015 or later in the 4.x series**. Firmware 5.x is unsupported for now.
 
 ## What it fixes
 
@@ -174,13 +174,15 @@ Detected installation failures, safety trips, and config errors are logged regar
 
 ## Compatibility
 
-Requires Kobo **software version 4.23.15505+**.
+Supported on Kobo **software version 4.21.15015 and later in the 4.x series**.
 
 **Kobo software 5.x is unsupported.** The mod targets the Qt 5 / QtWebKit stack used by 4.x firmware.
 
 Compatibility checks cover firmware targets rather than a list of device models. Passing those checks does not replace testing on the device.
 
-The three in-memory byte patches and the WebKit layout detour locate code by instruction patterns. The anchor checks cover firmware 4.23.15505 through 4.46.23836 and verify that each pattern is unique and carries the expected bytes. The two Qt detours resolve exported function symbols instead. None uses a fixed firmware address. A missing or incompatible target skips the affected fix.
+The three in-memory byte patches and the WebKit layout detour locate code by instruction patterns. The anchor checks cover firmware 4.21.15015 through 4.46.23836 and verify that each pattern is unique and carries the expected bytes. The two Qt detours resolve exported function symbols instead. None uses a fixed firmware address. A missing target or failed compatibility check skips the affected fix or keeps its stock behavior. These checks cannot detect every change in reader behavior.
+
+Earlier 4.x releases are untested. The support floor is not a runtime version gate; the mod attempts the same per-fix checks there. On 4.21.15015, the smallest optional line spacing can still leave a thin fragment of the previous line at the top of a page.
 
 ## Safety
 
