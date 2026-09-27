@@ -21,7 +21,7 @@ Use Libron 0.25 for Roman text and Kobo Tsukushi Mincho for Japanese. Copy sidel
 
 | Book | Setup and steps | Broken result | Expected fixed result |
 | --- | --- | --- | --- |
-| `01-baseline` | Use an uninstructed TrueType font. Compare repeated letters in “Reading sample”; try the sizes in “Size sweep”. Toggle `ntf_no_hinting`. | Repeated copies of a glyph have different vertical bounds or baseline positions. | Repeated glyphs align consistently. If the stock result is already even, record “not reproduced”, not a pass. |
+| `01-baseline` | Use an uninstructed TrueType font. Compare letter shapes and vertical alignment in “Reading sample”; try the sizes in “Size sweep”. Toggle `ntf_no_hinting`. | Hinting changes the letters' vertical shape and apparent alignment. The effect varies with font size. | Unhinted rendering preserves the font's outlines without snapping them to the pixel grid. Inspect ascenders, rounded letters and descenders as well as repeated copies of a glyph. |
 | `02-vertical` | Select Kobo Tsukushi Mincho. Read “冒頭” for long-vowel marks and “画はどうかね” for brackets. Change the font size, open an English book, then reopen this book. Toggle `ntf_vertfix`; also compare fast shaping on and off with the vertical fix enabled. | Brackets and `ー` remain horizontal, or punctuation sits in the wrong position. | Brackets enclose vertical text; `ー` follows the column; punctuation uses vertical placement. Fast shaping must preserve these forms across chapter and book changes. |
 | `03-justification` | Select full justification in the reader. At reading size 42, inspect “rate! However, the Multiplication Table”. The broken version stretches the letters in “rate!” and leaves its following space narrow. Toggle `ntf_justify_kospan`. | Spaces after sentence-ending `koboSpan` elements receive a different share of justification. | Word spaces and sentence-boundary spaces expand consistently. Ignore the final, unjustified line of a paragraph. |
 | `04-punctuation` | Select full justification. Inspect the dialogue's curly quotes and dashes. Toggle `ntf_justify_punct`. | Extra justification space appears around punctuation. | Punctuation stays attached to its surrounding text while word spaces expand. |
@@ -55,7 +55,7 @@ The README captures use the Clara BW layout on firmware 4.46.23836, reading size
 | Chapter opener | `10-openers`, first page | Left |
 | Small caps | `14-small-caps`, first page | Left |
 
-The hinting pair changes glyph rasterization, but repeated glyphs were already aligned in this Libron sample. Do not count it as a reproduced baseline-wobble defect.
+The hinting pair demonstrates changes in vertical glyph shape and apparent alignment. Compare several font sizes: the effect need not appear as repeated copies of a letter sitting at different heights.
 
 Capture the reading page with menus closed. Use the same crop for the original and fixed versions; do not move, retouch or rescale individual letters. Keep enough surrounding text to show the defect in context. Keep full-resolution originals when making enlarged details or difference images.
 

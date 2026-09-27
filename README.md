@@ -80,7 +80,7 @@ The middle image shows changed ink: red marks its original position, green marks
 
 ### Fix #1: Glyph hinting
 
-This pair shows the change from hinted to unhinted Libron at reading size 42. Repeated glyphs were already aligned in this sample, so it demonstrates the rendering change rather than a reproduced baseline defect.
+This pair shows the change from hinted to unhinted Libron at reading size 42. Disabling hinting changes the letters' vertical shape and apparent alignment. The effect varies with font size.
 
 | original | diff | fixed |
 |---|---|---|
