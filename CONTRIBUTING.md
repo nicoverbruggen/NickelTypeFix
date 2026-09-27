@@ -38,6 +38,8 @@ Run `test/logging/check.sh` with a C compiler. CI runs it in the build container
 
 ## Testing on a device
 
+Use the [public-domain fixtures and device test guide](test/fixtures/README.md) to compare each fix with the same book and settings. The guide also covers screenshot capture and rebuilding the EPUBs.
+
 The container uses the toolchain's FreeType backend. Device tests still need to confirm Nickel's hook routing, font reload sequence, iType rendering, and actual reader behavior.
 
 1. Copy `KoboRoot.tgz` into the Kobo's hidden `.kobo` folder over USB.

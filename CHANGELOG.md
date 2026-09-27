@@ -8,6 +8,7 @@
 
 ### Added
 
+- Public-domain EPUB fixtures and a device test guide for comparing the typography fixes.
 - Long chapters load without Nickel's fixed 100 ms pauses between local EPUB chunks. Set `ntf_fast_epub_delivery:0` to keep those pauses.
 
 ### Improved

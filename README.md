@@ -78,13 +78,15 @@ After doing that, reboot. The setting enables the text path used by the justific
 
 ## Screenshots
 
-These are actual page captures from my own **Kobo Clara BW** before and after installing the mod.
+These Nickel page captures use the [public-domain test books](test/fixtures/README.md). Roman text uses Libron; the capital-spacing example uses PT Serif. Japanese uses Kobo Tsukushi Mincho. The guide records the device layout, firmware, settings and config switches for each comparison.
 
-The middle **diff** overlays the two: **red** is ink the fix removed (its old position), **green** is ink the fix added (its new position), white is unchanged.
+The excerpts come from Lewis Carroll's *Alice's Adventures in Wonderland* and Natsume Sōseki's *I Am a Cat* (吾輩は猫である). Read the [Japanese original at Aozora Bunko](https://www.aozora.gr.jp/cards/000148/files/789_14547.html), or see [Nick Bradley's 2025 English translation, Volume One](https://www.penguin.co.nz/books/i-am-a-cat-9781784879792).
 
-(This way, the effect is obvious even where it's subtle on the page.)
+The middle image shows changed ink: red marks its original position, green marks its fixed position, and white is unchanged. Each pair uses the same crop.
 
-### Fix #1: Glyph "wobble" (uneven baseline)
+### Fix #1: Glyph hinting
+
+This pair shows the change from hinted to unhinted Libron at reading size 42. Repeated glyphs were already aligned in this sample, so it demonstrates the rendering change rather than a reproduced baseline defect.
 
 | original | diff | fixed |
 |---|---|---|
@@ -97,6 +99,8 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 | <img src="docs/screenshots/cjk-broken.png" alt="vertical original" width="250"> | <img src="docs/highlight/cjk-diff.png" alt="vertical diff" width="250"> | <img src="docs/screenshots/cjk-correct.png" alt="vertical fixed" width="250"> |
 
 ### Fix #3: Justified text at koboSpan boundaries
+
+In the original, “rate!” has stretched-out letters but barely any space before “However”. The fix restores normal letter spacing and distributes the extra space between words.
 
 | original | diff | fixed |
 |---|---|---|
@@ -115,6 +119,8 @@ The middle **diff** overlays the two: **red** is ink the fix removed (its old po
 | <img src="docs/screenshots/cap-broken.png" alt="capital spacing original" width="250"> | <img src="docs/highlight/cap-diff.png" alt="capital spacing diff" width="250"> | <img src="docs/screenshots/cap-correct.png" alt="capital spacing fixed" width="250"> |
 
 ### Fix #9: Page-boundary clipping
+
+At line spacing 0.80, the original page ends with a strip of the next line. The fixed version leaves that line for the next page. Compare the following page [before](docs/screenshots/pagecut-next-broken.png) and [after](docs/screenshots/pagecut-next-correct.png) to check that the line remains whole.
 
 | original | diff | fixed |
 |---|---|---|
