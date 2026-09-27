@@ -44,7 +44,7 @@ The page-boundary fix leaves layouts alone when it cannot establish safe page bo
 
 | Problem | Fix | Number |
 | --- | --- | --: |
-| A font or size change leaves a chapter using the system font. | Reapplies the selected font after the chapter loads. | **#6** |
+| A chapter uses a fallback font or line spacing calculated before the selected font loads. | Reapplies the selected font and its line spacing after the chapter loads. | **#6** |
 | A font with a number in its name, such as `Source Serif 4`, falls back to the default font. | Quotes the font family in the reader's CSS. | **#8** |
 
 ### Chapter loading
@@ -72,7 +72,7 @@ After doing that, reboot. The setting enables the text path used by the justific
 
 ## Screenshots
 
-These Nickel page captures use the [public-domain test books](test/fixtures/README.md). Roman text uses Libron; the capital-spacing example uses PT Serif. Japanese uses Kobo Tsukushi Mincho. The guide records the device layout, firmware, settings and config switches for each comparison.
+These Nickel page captures use the [public-domain test books](test/fixtures/README.md). Roman text uses Libron, with PT Serif for capital spacing and Source Serif 4 for font loading. Japanese uses Kobo Tsukushi Mincho. The guide records the device layout, firmware, settings and config switches for each comparison.
 
 The excerpts come from Lewis Carroll's *Alice's Adventures in Wonderland* and Natsume Sōseki's *I Am a Cat* (吾輩は猫である). Read the [Japanese original at Aozora Bunko](https://www.aozora.gr.jp/cards/000148/files/789_14547.html), or see [Nick Bradley's 2025 English translation, Volume One](https://www.penguin.co.nz/books/i-am-a-cat-9781784879792).
 
@@ -105,6 +105,14 @@ In the original, “rate!” has stretched-out letters but barely any space befo
 | original | diff | fixed |
 |---|---|---|
 | <img src="docs/screenshots/letterspacing-broken.png" alt="letter-spacing original" width="250"> | <img src="docs/highlight/letterspacing-diff.png" alt="letter-spacing diff" width="250"> | <img src="docs/screenshots/letterspacing-correct.png" alt="letter-spacing fixed" width="250"> |
+
+### Fix #6: Font loading and line spacing
+
+Nickel can calculate line spacing before the selected font loads. With Source Serif 4, the first opening then has tighter lines than the same page after changing the font size and returning. The fix recalculates the style after loading the font, so spacing is correct on the first opening. These captures keep font-family quoting enabled in both versions.
+
+| original | diff | fixed |
+|---|---|---|
+| <img src="docs/screenshots/font-loading-broken.png" alt="font loading original" width="250"> | <img src="docs/highlight/font-loading-diff.png" alt="font loading diff" width="250"> | <img src="docs/screenshots/font-loading-correct.png" alt="font loading fixed" width="250"> |
 
 ### Fix #7: Capital spacing (cpsp)
 
