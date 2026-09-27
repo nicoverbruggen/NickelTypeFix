@@ -8,6 +8,7 @@
 
 ### Improved
 
+- The unexpected-thread warning names the caller and clarifies that the fix is skipped for that call.
 - Reduced chapter layout work by skipping Qt's repeated preparation of text lines whose glyphs are already ready.
 - Reduced page-boundary correction work in long chapters by searching only the line rectangles that can affect each page.
 

@@ -632,14 +632,14 @@ static bool ntf_fontfix_logged = false;             // the friendly "fix is acti
 // a logged no-op instead of racing on a reader pointer mid-destruction.
 static uintptr_t ntf_qt_thread = 0;   // 0 = unclaimed (pthread_self() is a TCB address on glibc, never 0)
 static bool ntf_qt_thread_warned = false;
-static bool ntf_on_qt_thread(void) {
+static bool ntf_on_qt_thread(const char *caller) {
     uintptr_t self = (uintptr_t)pthread_self(), expected = 0;
     if (__atomic_compare_exchange_n(&ntf_qt_thread, &expected, self, false,
                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
         || expected == self)
         return true;
     if (!__atomic_exchange_n(&ntf_qt_thread_warned, true, __ATOMIC_RELAXED))
-        NTF_LOG("Note: a hooked GUI call arrived on an unexpected thread; the affected fix is sitting out (other fixes are unaffected).");
+        NTF_LOG("Note: %s encountered a call on an unexpected thread; skipping this call's fix logic (other fixes are unaffected).", caller);
     return false;
 }
 
@@ -747,7 +747,7 @@ void _ntf_wv_setCurrentPage(void *self, int page) {
     // make a missing destructor hook fail safe by sitting Fix 6 out.
     if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && ntf_chapter_needs_fix
         && self == ntf_chapter_view && self == ntf_kepub_reader_view && !ntf_in_fixonturn
-        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_on_qt_thread()) {
+        && ntf_pageStyleCss && ntf_kbr_addCssToHtml && ntf_on_qt_thread(__func__)) {
         ntf_chapter_needs_fix = false;
         ntf_chapter_view = nullptr;
         ntf_in_fixonturn = true;
@@ -1801,7 +1801,7 @@ static bool ntf_view_seen(const char *what) {
 }
 
 static void ntf_view_report(const char *fmt, ...) {
-    if (!ntf_log() || !ntf_on_qt_thread()) return;
+    if (!ntf_log() || !ntf_on_qt_thread(__func__)) return;
     char note[96];
     va_list ap;
     va_start(ap, fmt);
@@ -2362,7 +2362,7 @@ public:
         : previous_(ntf_pagecut_paint_ctx), logged_(false) {
         QRect render_region = region.boundingRect();
         QRect paint_viewport = painter ? painter->viewport() : QRect();
-        bool on_qt = ntf_on_qt_thread();
+        bool on_qt = ntf_on_qt_thread(__func__);
         bool geometry_matches = ntf_pagecut_render_matches_page(
             render_region.x(), render_region.y(), render_region.width(), render_region.height(),
             ntf_pagecut_page_hint_width, ntf_pagecut_page_hint_height,
@@ -2666,7 +2666,7 @@ void *_ntf_wv_locatePages(void *self, int reload) {
     // closes (see ntf_pagecut_fix_depth: locatePages re-enters this hook mid-pass on
     // settings-change passes, and an inner frame must neither re-arm nor disarm the outer pass).
     bool fixing = ntf_enabled() && ntf_pagecut_trim() && ntf_pagecut_ready()
-        && ntf_on_qt_thread();
+        && ntf_on_qt_thread(__func__);
     ntf_pagecut_fix_frame fix(fixing);
     if (fix.outermost()) {
         ntf_pagecut_trim_armed = false;
@@ -2682,7 +2682,7 @@ void *_ntf_wv_locatePages(void *self, int reload) {
     // frame closes before the fix's, while the pass is still armed.
 #if NTF_DEV_BUILD
     bool probing = ntf_enabled();
-    bool on_gui = probing && ntf_on_qt_thread();
+    bool on_gui = probing && ntf_on_qt_thread(__func__);
     if (probing && !on_gui && ntf_pagecut_stray_ok())
         NTF_LOG_BUFFERED("pagecut probe: stray locatePages (tid=%lx): view=%p reload=%d",
             (unsigned long)pthread_self(), self, reload);
@@ -2711,7 +2711,7 @@ void _ntf_wv_pageRect(QRect *sret, const void *self, int page) {
     int stock_top = sret->top();
     int stock_bottom = sret->bottom();
 #endif
-    bool on_gui = ntf_on_qt_thread();
+    bool on_gui = ntf_on_qt_thread(__func__);
     bool relevant = ntf_enabled() && ntf_pagecut_trim() && ntf_pagecut_ready() && on_gui
         && self == ntf_pagecut_snap_view && page > 0 && page <= ntf_pagecut_snap_pages
         && ntf_pagecut_snapped_starts.size() > ntf_pagecut_snap_pages
@@ -2746,7 +2746,7 @@ void _ntf_qwf_render(void *self, QPainter *painter, const QRegion &clip) {
     real_qwf_render(self, painter, clip);
     // The first QWebFrame render closes the capture window. A non-matching region leaves the frame
     // unknown, so paint ownership safely sits this render out.
-    if (ntf_pagecut_page_hint_pending && ntf_on_qt_thread())
+    if (ntf_pagecut_page_hint_pending && ntf_on_qt_thread(__func__))
         ntf_pagecut_page_hint_pending = false;
 }
 
@@ -2808,7 +2808,7 @@ void _ntf_qp_drawGlyphRun(QPainter *self, const QPointF &position,
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kbrb_locatePages(void *self, int reload) {
     bool probing = ntf_enabled();
-    bool on_gui = probing && ntf_on_qt_thread();
+    bool on_gui = probing && ntf_on_qt_thread(__func__);
     if (probing && !on_gui && ntf_pagecut_stray_ok())
         NTF_LOG_BUFFERED("pagecut probe: stray reader locatePages (tid=%lx): view=%p reload=%d",
             (unsigned long)pthread_self(), self, reload);
@@ -2829,7 +2829,7 @@ int _ntf_wv_cutPage(const QVector<QRect> *rects, int start, int limit, int dir) 
     try {
         if (!__atomic_exchange_n(&ntf_pagecut_cut_seen, true, __ATOMIC_RELAXED))
             NTF_LOG_BUFFERED("pagecut probe: first cutPage call of this boot (tid=%lx)", (unsigned long)pthread_self());
-        if (ntf_on_qt_thread() && ntf_pagecut_depth > 0) {
+        if (ntf_on_qt_thread(__func__) && ntf_pagecut_depth > 0) {
             ntf_pagecut_observe(rects, start, limit, dir, ret);
         } else if (ntf_pagecut_stray_ok()) {
             // Off the claimed thread, or no locatePages frame open. The classification is pure over
@@ -2854,7 +2854,7 @@ extern "C" __attribute__((visibility("default")))
 void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
     void *ret = real_wv_sortRects(rects, dir);
     bool fixing_here = ntf_enabled() && ntf_pagecut_trim() && rects
-        && ntf_pagecut_trim_armed && ntf_on_qt_thread();
+        && ntf_pagecut_trim_armed && ntf_on_qt_thread(__func__);
     bool captured = false;
     if (fixing_here) {
         try {
@@ -2868,7 +2868,7 @@ void *_ntf_wv_sortRects(QVector<QRect> *rects, int dir) {
 #if NTF_DEV_BUILD
     bool probe_here = false;
     bool probing = ntf_enabled();
-    probe_here = probing && rects && ntf_on_qt_thread() && ntf_pagecut_depth > 0;
+    probe_here = probing && rects && ntf_on_qt_thread(__func__) && ntf_pagecut_depth > 0;
     int probe_idx = 0;
     if (probe_here) {
         try {
@@ -3035,7 +3035,7 @@ static bool ntf_epub_delivery_ready() {
 
 extern "C" __attribute__((visibility("default")))
 void *_ntf_kbrb_startChapterLoad(void *a0, void *a1, void *a2, void *a3) {
-    if (ntf_enabled() && ntf_on_qt_thread()
+    if (ntf_enabled() && ntf_on_qt_thread(__func__)
         && (ntf_parse_layout_ready || (ntf_fast_epub_delivery() && ntf_epub_delivery_ready()))) {
         ntf_in_chapter_load = true;
         ntf_chapter_load_ms = ntf_monotonic_ms();
@@ -3054,7 +3054,7 @@ void _ntf_kbrb_loadFinished(void *self, bool ok) {
     // Before the real call on purpose: locatePages runs one step inside it, so this is the
     // last point a layout change still reaches the page table. Uses the tracked view, not
     // self; both share an address here, but only that one is known to be a WebkitView.
-    if (ok && ntf_enabled() && ntf_on_qt_thread() && ntf_kepub_reader_view)
+    if (ok && ntf_enabled() && ntf_on_qt_thread(__func__) && ntf_kepub_reader_view)
         ntf_run_page_script(ntf_kepub_reader_view, ntf_center_images(), ntf_dropcap_fix(), false);
     if (real_kbrb_loadFinished) real_kbrb_loadFinished(self, ok);
 
@@ -3068,7 +3068,7 @@ extern "C" __attribute__((visibility("default")))
 void _ntf_qtimer_singleShotImpl(int interval, Qt::TimerType type, const QObject *receiver, void *slot) {
     if (!real_qtimer_singleShotImpl) return;
     bool loading = ntf_enabled() && ntf_fast_epub_delivery() && ntf_epub_delivery_ready()
-        && ntf_on_qt_thread() && ntf_parse_window_open();
+        && ntf_on_qt_thread(__func__) && ntf_parse_window_open();
     int adjusted = ntf_epub_delivery_interval(loading, interval, receiver);
     if (adjusted != interval) NTF_DBG("EPUB delivery: queued the next chunk without the 100 ms pause.");
     real_qtimer_singleShotImpl(adjusted, type, receiver, slot);
@@ -3452,7 +3452,7 @@ NickelHook(
 // callback must not be able to re-enter Fix 6 with a partially constructed KepubBookReader.
 extern "C" __attribute__((visibility("default")))
 void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
-    bool on_qt = ntf_on_qt_thread();
+    bool on_qt = ntf_on_qt_thread(__func__);
     if (on_qt) {
         ntf_kepub_reader = nullptr;
         ntf_kepub_reader_view = nullptr;
@@ -3485,7 +3485,7 @@ void _ntf_kepubReaderDtor(void *self) {
         // Clear even on a wrong thread (ntf_on_qt_thread still logs the
         // anomaly): a dangling reader pointer is strictly worse than the race
         // being reported.
-        (void)ntf_on_qt_thread();
+        (void)ntf_on_qt_thread(__func__);
         ntf_kepub_reader = nullptr;
         ntf_kepub_reader_view = nullptr;
         ntf_chapter_view = nullptr;
@@ -3500,7 +3500,7 @@ void _ntf_kepubReaderDtor(void *self) {
 }
 extern "C" __attribute__((visibility("default")))
 void _ntf_cwv_setWritingDirection(void *self, int dir) {
-    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_on_qt_thread()) try {
+    if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_on_qt_thread(__func__)) try {
         bool vert = (dir == ntf_wd_vrl || dir == ntf_wd_vlr);
         // Repair the slot from what it ACTUALLY holds (see ntf_vert_views): set only an empty slot,
         // merge into (never replace) existing CSS, strip only our own rule. The table is never, by
@@ -3693,7 +3693,7 @@ static void ntf_quote_reader_fontfamily(QString &css) {
 // only read state, never mutate it.
 extern "C" __attribute__((visibility("default")))
 void _ntf_wv_addCssToHtml(void *self, QString *css) {
-    if (css && ntf_log() && ntf_on_qt_thread())
+    if (css && ntf_log() && ntf_on_qt_thread(__func__))
         ntf_log_css_alignment(self == ntf_kepub_reader_view ? "injected by Nickel (reader view)"
                                                             : "injected by Nickel (other view)", *css);
     try {
@@ -3705,7 +3705,7 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         // injection while a reader is live learns it with an ABI proof
         // (ntf_learn_reader_view) — offset 0 included.
         if (ntf_enabled() && ntf_kepub_fontfix() && real_kepubReaderDtor && !ntf_in_fixonturn
-            && ntf_on_qt_thread()
+            && ntf_on_qt_thread(__func__)
             && (ntf_kepub_reader_view == self
                 || (!ntf_kepub_reader_view && ntf_learn_reader_view(self)))) {
             ntf_chapter_needs_fix = true;
@@ -3718,7 +3718,7 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         // call's own by-value copy (a caller-owned temporary per the ARM C++ ABI), so appending here
         // only affects this call.
         if (ntf_enabled() && ntf_vertfix() && ntf_vertfix_ready && ntf_wv_webView && css
-            && ntf_on_qt_thread()) {
+            && ntf_on_qt_thread(__func__)) {
             void *cwv = ntf_wv_webView(self);
             bool tracked = cwv && ntf_vert_view_tracked(cwv);
             bool append = tracked && !css->contains(QString::fromLatin1(NTF_VERT_RULE));
@@ -3741,7 +3741,7 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
     // Development builds report the resulting document here. The corrective scripts run from
     // loadFinished because pagination has already run by the time the CSS lands at this seam.
 #if NTF_DEV_BUILD
-    if (ntf_enabled() && ntf_on_qt_thread())
+    if (ntf_enabled() && ntf_on_qt_thread(__func__))
         ntf_run_page_script(self, false, false, true);
 #endif
 }
