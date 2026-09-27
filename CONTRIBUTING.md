@@ -20,10 +20,6 @@ Development builds append `-dev-<fingerprint>` to that version, or use `dev-<fin
 
 Run `test/build-version/check.sh` in the build container to check fingerprint inputs and release, development, and source-archive version stamping. CI runs the same check.
 
-### Development probes
-
-Release builds omit the page and page-boundary probes. Build with `NTF_DEV_BUILD=1 ./build.sh` to compile both probes in. A development build runs them whenever the mod is enabled; there are no probe config keys. The page-boundary probe logs the line boxes before and after Fix 9, its guard refusals, and the resulting page boundaries. The page probe logs a short description of each distinct chapter document. Both observe only and leave pagination unchanged.
-
 ## Detour installer tests
 
 Run `test/detour/check.sh` on Linux, including inside the build container. It checks real memory mappings and injects installation failures. CI runs it with the other local checks. Building the same test for ARM also executes the replacement and original Thumb functions; the host run checks their bytes and permissions. Device testing must still check startup and all four detoured functions.

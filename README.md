@@ -252,7 +252,7 @@ Delete `KOBOeReader/.adds/nickel-type-fix/uninstall` and reboot; NickelHook remo
 
 This repository was made with the assistance of large language models. Specifically: Anthropic's Opus 4.8, Opus 5 and Fable 5, as well as OpenAI's GPT 5.5 and 5.6 Sol. 
 
-Development builds can include always-on layout probes that release builds omit. See [CONTRIBUTING.md](CONTRIBUTING.md#development-probes).
+Use `NTF_DEV_BUILD=1 ./build.sh` to include a source fingerprint in the build version. See [CONTRIBUTING.md](CONTRIBUTING.md#building).
 
 These models were incredibly useful when attempting to reverse engineer and diagnose the actual issues. 
 

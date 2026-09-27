@@ -8,8 +8,7 @@ wired, and reading the diff of a 2500-line file will not tell you that with any 
 Everything in the snapshot is read out of the compiled library, never out of the source, so
 it describes what actually ships.
 
-The snapshot records the default release build. A build made with `NTF_DEV_BUILD=1` intentionally
-adds probe hooks, symbol lookups, and strings, so do not re-record `golden.txt` from that variant.
+Release and development builds expose the same interface. `NTF_DEV_BUILD=1` only adds a source fingerprint to the build version.
 
 ```sh
 make all          # or ./build.sh

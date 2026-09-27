@@ -255,7 +255,7 @@ The correction pass uses the sorted rectangle tops to limit each search. Boundar
 
 In an emulated Clara Colour firmware 4.46.23836 test, a synthetic 274-page chapter with 4,924 line rectangles took about 20 ms per correction pass before bounded searches and 0.5 ms after them. Loading ran two passes, removing about 39 ms of correction work. Page-start and render-end hashes matched. These are emulated timings for that fixture, not a measured hardware speedup or a prediction for every book.
 
-With verbose logging enabled, a release build reports how many page boundaries moved. Development builds also log the line rectangles, page ownership, and each glyph-run decision as described below.
+With verbose logging enabled, the mod reports how many page boundaries moved.
 
 ---
 
@@ -439,20 +439,11 @@ An earlier version read only the second case and ran the script from `addCssToHt
 
 Running only from `loadFinished` covers the settings change too, because of what the script writes. It sets inline styles on elements in the live DOM and marks them, and a settings change re-paginates the same document without reloading it, so those styles and marks are still there and still apply at the new font size. The correction survives; it does not need re-applying. Putting a corrective pass back on the CSS seam would reintroduce exactly the bug above, since both fixes now change vertical layout.
 
-**What it does.** It reads the chapter and sets inline styles on the elements it can identify: `text-align` on a block holding a centred image, `display` and auto side margins on the image itself, and `display`, `height` and `line-height` on a drop-cap span. That is all it writes. It adds no elements, reads nothing from outside the page, sends nothing anywhere, and never touches the book's files on disk. It still has to be idempotent, because a chapter can be loaded more than once in a session: it marks each element it touches with a `data-ntf` attribute, skips a marked element next time, and returns immediately when there is nothing to do. In a release build, no script is built or run when both fixes are off. Development builds still run the page probe.
+**What it does.** It reads the chapter and sets inline styles on the elements it can identify: `text-align` on a block holding a centred image, `display` and auto side margins on the image itself, and `display`, `height` and `line-height` on a drop-cap span. That is all it writes. It adds no elements, reads nothing from outside the page, sends nothing anywhere, and never touches the book's files on disk. It still has to be idempotent, because a chapter can be loaded more than once in a session: it marks each element it touches with a `data-ntf` attribute, skips a marked element next time, and returns immediately when there is nothing to do. No script is built or run when both fixes are off.
 
 One WebKit detail matters. A style write only marks the render tree dirty; geometry is recomputed later, and pagination reads the tree straight after this call. The script therefore reads `document.body.offsetHeight` to force the recompute synchronously, but only when it actually changed something, so the common no-op pass costs nothing.
 
 **Gates.** The pass runs on the reader's own view (the same identity proof Fix 6 uses), on the GUI thread, and only with the symbol resolved. The whole call sits inside an exception guard: an error skips that one update and logs a line, rather than propagating into Nickel.
-
----
-
-## Development probes
-
-`NTF_DEV_BUILD=1` adds two bounded logging probes. Release builds omit the probe-only hooks, code, and strings. Fix 9's paint hooks remain in release builds because they enforce page ownership; the development build only adds detailed observations around them.
-
-- The page-boundary probe dumps the complete and pagination line boxes, reads each boundary back from the finished page table, logs each corrected `pageRect`, and records every glyph run which the ownership rule accepts or suppresses. Probe-only hooks are strict passthrough.
-- The page probe writes one line describing what the chapter actually contains: how many images there are, what their parent blocks look like, and which paragraphs start with an oversized element. It was written because the Fix 10 script matched nothing on a real store kepub, and store books are converted by Kobo rather than by kepubify, so the markup nesting is not necessarily the same. Repeated identical lines collapse to the first.
 
 ---
 
@@ -485,7 +476,6 @@ This runs only inside `ntf_init`. The two word stores do not make the eight-byte
 
 - The in-memory anchors (Fixes 3, 4, 5) were verified present and byte-identical in real 4.38 and 4.45 firmware `libQtGui`/`libQtWebKit`, even though those libraries otherwise diverge (the letter-spacing anchor sits at `0x1303bc` on 4.38 vs `0x130854` on 4.45, found by the same pattern), so the same patches hold across the device line. All are located by pattern, so if a future build re-encodes the target, the anchor simply won't match and the fix sits out.
 - The hooks and lookups (Fixes 1, 2, and 6 through 11) bind exact symbols and are `optional`; a rename makes that fix inert and leaves the rest running.
-- Development probes observe only. Probe-only hooks call the real function first and pass its result back. Release builds do not contain them.
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - A healthy boot logs the firmware, build identity, and feature status. Detected installation failures, safety trips, and config errors are logged regardless of the verbosity setting. A config mistake also enables verbose logging for that boot. Set `ntf_log:1` for per-fix traces; an active status reports installation readiness, not proof of correct rendering.
 - Nothing is written to any device library on disk; a boot without the mod is stock.

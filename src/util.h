@@ -31,8 +31,7 @@ extern "C" {
 // Buffer diagnostics in memory and write them in one go.
 //
 // Each line used to open, write and close the log file on its own. On eMMC through vfat that is
-// the expensive part, not the bytes, and verbose logging can produce hundreds of lines for a
-// single page render — enough to distort the very timings a probe is there to measure.
+// the expensive part, not the bytes. Buffer verbose output so logging does not stall page renders.
 //
 // Problems are not buffered. NTF_LOG means something went wrong, it is rare, and it has to survive
 // a crash that happens immediately afterwards, so it writes through and takes any pending

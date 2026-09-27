@@ -35,7 +35,6 @@ ifneq ($(NTF_DEV_BUILD),1)
 $(error NTF_DEV_BUILD must be 0 or 1)
 endif
 endif
-override CPPFLAGS += -DNTF_DEV_BUILD=$(NTF_DEV_BUILD)
 
 # NickelHook uses VERSION for its startup log and our log prefixes. Hash the files in this
 # build directory so build.sh's source archive and a direct make invocation use the same inputs.
