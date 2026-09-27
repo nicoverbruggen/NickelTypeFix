@@ -1,69 +1,63 @@
 # NickelTypeFix
 
-This is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for Kobo eReaders that fixes several **text-rendering defects** in the reader's old Qt 5.2 / QtWebKit / Monotype iType stack, and makes books open faster.
+NickelTypeFix fixes text rendering on Kobo eReaders and reduces the work needed to open long chapters. It is a [NickelHook](https://github.com/pgaskin/NickelHook) mod for the Qt 5 reader in Kobo firmware 4.x.
 
-Each fix has its own configuration switch and checks its required hooks or code patterns before applying. Some fixes share hooks or detours, so a failed check can disable more than one feature. These checks reduce risk; they do not prove that every font, book, or firmware behaves correctly. See [Safety](#safety) for the checks and their limits.
+Each fix has a configuration switch. Missing hooks or incompatible code patterns disable the affected fixes. See [Safety](#safety) for the checks and their limits.
 
 > [!IMPORTANT]
-> This mod supports Kobo software version **4.x only**. See [Compatibility](#compatibility) for details.
+> Requires **Kobo firmware 4.23.15505 or later in the 4.x series**. Firmware 5.x is unsupported for now.
 
 ## What it fixes
 
-### How glyphs are drawn
+### Glyphs
 
-| The problem | What the mod does | Fix |
+| Problem | Fix | Number |
 | --- | --- | --: |
-| Letters drift a pixel up or down, so the baseline looks uneven. Most fonts are affected. | Loads the font unhinted, which bypasses the problem. | **#1** |
-| Some fonts have `cpsp` metadata baked in, a feature meant only for all-caps runs. The reader applies it to body text too. This makes fonts look spaced incorrectly. | Removes `cpsp` from fonts loaded through Qt's application-font API when the file and table checks pass. Other features are retained. | **#7** |
-| A book that asks for small caps (`font-variant: small-caps`, which Standard Ebooks uses for names and chapter openings) gets ordinary capitals shrunk to 70%. They come out thin and cramped next to the text, whatever the font carries. | When the reading font has its own small caps (an OpenType `smcp` feature), uses those glyphs at their real size, with the font's own kerning. A font without small caps is unchanged. Needs `optimizeLegibility`. | **#14** |
+| Copies of the same letter sit a pixel higher or lower on the line. | Disables font hinting to keep the baseline even. | **#1** |
+| Capitals have extra spacing in ordinary prose because the reader applies the font's `cpsp` feature. | Removes `cpsp` when loading the font, preserving its other features. | **#7** |
+| Small caps look thin because the reader makes them by shrinking ordinary capitals. | Uses the reading font's `smcp` glyphs and kerning when available. | **#14** |
 
-Small-caps substitution uses the primary reading font. It skips right-to-left runs and glyphs supplied by a fallback font; it does not implement every OpenType lookup format.
+Real small caps need `optimizeLegibility`. Fonts without `smcp`, fallback glyphs and right-to-left runs keep their original rendering. The fix supports the common lookup formats, not every OpenType font.
 
-### How text is spaced on a line
+### Spacing
 
-These fixes act on WebKit's complex text path. `optimizeLegibility` enables that path; a book's `letter-spacing` can also select it without that setting.
-
-| The problem | What the mod does | Fix |
+| Problem | Fix | Number |
 | --- | --- | --: |
-| Justified kepubs break at sentence boundaries, leaving uneven gaps. The main justification fix. | Corrects Qt's justifier so the boundary space gets its share. | **#3** |
-| Justification skews around punctuation: em and en dashes, ellipses, curly quotes. | Justification is fixed by fixing how text is laid out. | **#4** |
-| `letter-spacing` widens the letters but leaves the spaces at their natural width, so tracked text (a heading, a styled caption, spaced small-caps) runs its words together. | Patches Qt's text shaper so the spaces get the same tracking, the way browsers render it. | **#5** |
+| Justified kepubs stretch letters or leave uneven gaps at sentence boundaries. | Includes the spaces at `koboSpan` boundaries in justification. | **#3** |
+| Justification adds unwanted space around dashes, ellipses and curly quotes. | Corrects which characters receive justification spacing. | **#4** |
+| CSS `letter-spacing` spreads letters apart but leaves word spaces too narrow. | Applies the same spacing to the spaces. | **#5** |
 
-### How a page is laid out
+These fixes need WebKit's complex text path. `optimizeLegibility` enables it; a book's `letter-spacing` can also select it.
 
-| The problem | What the mod does | Fix |
+### Page layout
+
+| Problem | Fix | Number |
 | --- | --- | --: |
-| Vertical (tategaki) CJK text renders sideways or misplaced under `optimizeLegibility`. | Keeps vertical books on WebKit's correct rendering path. | **#2** |
-| Sometimes lines of text seem to be cut off and spread across two page turns. | Repairs line-box overlap at page edges and paints each matched line on one page. Layouts that fail its geometry checks are left alone. | **#9** |
-| Setting the text alignment to left (or justified) also drags a centred image to the left margin. | Puts back the centring the book itself asked for, on those images only. An image already centred on the page is left alone. | **#10** |
-| A large drop cap at the start of a chapter pushes the line under it down, so the first two lines of the paragraph sit further apart than the rest. | Stops the drop cap inflating its line, early enough that the reader counts the pages from the corrected layout. A drop cap the book floats is already right and is left alone. | **#11** |
+| Vertical Japanese and Chinese text has sideways or misplaced glyphs with `optimizeLegibility`. | Restores WebKit's vertical rendering path. | **#2** |
+| A line is clipped or split across two pages. | Corrects overlapping line boxes and keeps each matched line on one page. | **#9** |
+| The reader's alignment setting moves centred images to the left margin. | Restores the image centring specified by the book. | **#10** |
+| An oversized inline initial creates an extra gap below the first line. | Removes the initial's excess line height before pagination. Floated initials keep their layout. | **#11** |
 
-### How fast a book opens
+The page-boundary fix leaves layouts alone when it cannot establish safe page boundaries.
 
-The shaping cache reuses results from the selected shaper. The mod rounds NG’s non-design kerning adjustments like the old shaper, fixing one-pixel spacing differences between repeated words. Runs with attached marks, positioning offsets, vertical advances or right-to-left text keep their original positioning. Switching to HarfBuzz NG can change glyph selection, spacing, or line breaks because it applies font features differently. The switch affects Qt text throughout Nickel, including its UI, and includes a repair for the selected-font dropdown preview.
+### Font selection
 
-| The problem | What the mod does | Fix |
+| Problem | Fix | Number |
 | --- | --- | --: |
-| A long chapter can take several seconds to open, and the wait grows with the length of the chapter. | Uses HarfBuzz NG and caches shaped text. The documented device measurements found roughly twice as fast book opening; the gain depends on the book, font, and device. | **#12** |
-| A long chapter is laid out twice while it opens, and the first one is thrown away before you ever see it. | Suppresses scheduled layout during a tracked chapter load, while allowing forced layout to finish the chapter. Short chapters may have no intermediate layout to skip. | **#13** |
-| Nickel pauses 100 ms between chunks while loading a local chapter. | Queues the next EPUB chunk without the fixed delay during a tracked chapter load. Delivery stays asynchronous. | **#15** |
+| A font or size change leaves a chapter using the system font. | Reapplies the selected font after the chapter loads. | **#6** |
+| A font with a number in its name, such as `Source Serif 4`, falls back to the default font. | Quotes the font family in the reader's CSS. | **#8** |
 
-In the [recorded measurements](ABOUT.md#fix-12--slow-chapter-opening--ntf_fast_shaping), switching shapers changed two line breaks in about 1,940; enabling the cache changed none. The layout-skipping test retained the same 121-page table. These are results for the tested chapter, not guarantees for every book. The [ARM regression suite](test/rendering/README.md) compares cached and uncached rendering under each shaper separately.
+### Chapter loading
 
-### Which font you actually get
-
-| The problem | What the mod does | Fix |
+| Problem | Fix | Number |
 | --- | --- | --: |
-| Changing the font (or size) can break under some circumstances, which (incorrectly) reverts to the system font as a result. | Re-applies your reading font on every chapter, so a chapter that drew before the font was ready gets corrected in place. | **#6** |
-| Fonts with a number in the name (like `Source Serif 4`) silently fall back to the default font. | Quotes the font name the reader injects, so numbered families work without renaming them. | **#8** |
+| Long chapters spend much of their load time shaping text. | Enables HarfBuzz NG, caches shaped text and skips repeated line preparation. | **#12** |
+| WebKit performs layout during loading, then discards that work. | Skips intermediate layout during a chapter load. | **#13** |
+| Nickel waits 100 ms between local EPUB chunks. | Delivers the next chunk asynchronously without the fixed pause. | **#15** |
 
-## Why was this made?
+The shaper switch affects text throughout Nickel and can change glyphs, spacing or line breaks. It includes compatibility repairs for the font dropdown and vertical glyphs. The cache preserves the selected shaper's output. See the [measurements and implementation](ABOUT.md#fix-12--slow-chapter-opening--ntf_fast_shaping) and [ARM rendering tests](test/rendering/README.md) for the checks behind these fixes.
 
-**The built-in reader application for Kobo devices has some rendering issues, especially when you enable `optimizeLegibility`. This mod aims to fix most rendering bugs in the reader application.**
-
-The point is to make `optimizeLegibility` usable by correcting the specific defects listed above. The cause of each defect and the mechanism for its fix is [documented here](ABOUT.md).
-
-Oh, and there's a few other fixes, too!
+The [technical notes](ABOUT.md) explain each defect and its cause. The [device fixtures and test guide](test/fixtures/README.md) provide public-domain books for comparing the results yourself.
 
 ## What is `optimizeLegibility`?
 
