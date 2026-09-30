@@ -170,7 +170,7 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 
-Detected installation failures, safety trips, and config errors are logged regardless of `ntf_log`. A healthy boot also logs the firmware, build identity, and feature status. Set `ntf_log` to `1` for detailed traces. An active status means the required installation checks passed; it does not confirm correct rendering of every book or font.
+Detected installation failures, safety trips, and config errors are logged regardless of `ntf_log`. A healthy boot also logs the firmware, build identity, and feature status. Set `ntf_log` to `1` for detailed traces. The EPUB delivery thread warning applies only to 100 ms `EpubNetworkReply` timers. A matching timer on the wrong thread keeps its original delay; later GUI-thread delivery can still be accelerated. An active status means the required installation checks passed; it does not confirm correct rendering of every book or font.
 
 ## Compatibility
 

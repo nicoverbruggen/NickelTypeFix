@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1
+
+### Fixed
+
+- Unrelated worker-thread timers no longer trigger the EPUB delivery thread warning. Matching EPUB timers on the wrong thread still warn and retain their original delay.
+
 ## v1.0
 
 ### Fixed

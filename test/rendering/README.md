@@ -20,7 +20,7 @@ CI runs the same command in its `ARM rendering regressions` job. It builds a loc
 | Shaping cache | Differences between uncached, first cached, and replayed glyphs, positions, cluster mappings, justification attributes, font sizes, line metrics, or pixels. The test counts calls through the original trampoline to prove that replay occurred. |
 | Cache input variations | Incorrect reuse across fonts, sizes, weight, kerning, rounded versus design metrics in both cache orders, combining marks, Arabic direction, or the 96-character recording boundary. |
 | Line preparation | Changed wrapping, line metrics, cursor positions, or pixels after skipping preparation of ready lines. Checks mixed directions, combining marks, ligatures, tabs, and fallback guards for unshaped text and inline objects. |
-| EPUB delivery | Changing unrelated timers or timers outside a chapter load, synchronous delivery, callbacks running out of order, or calling a destroyed reply. |
+| EPUB delivery | Unrelated worker timers reaching the thread guard, missing warnings for matching EPUB timers on the wrong thread, reading chapter state from a worker, changing unrelated timers or timers outside a chapter load, synchronous delivery, callbacks running out of order, or calling a destroyed reply. |
 | Small caps | Wrong small-cap glyph IDs, an unexpanded `ffi` ligature, a scaled font engine, changed line metrics, changed ordinary text or a font without `smcp`, or a cache replay that changes the result. |
 | Small-caps font cache | Refusing a new face after 32 entries, evicting a recently used entry, releasing a record still held by a render, retaining an unused evicted record, or changing the result when revisiting a font. Uses 65 distinct face identities with one real font's tables. |
 

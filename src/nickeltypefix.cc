@@ -2409,9 +2409,10 @@ void _ntf_kbrb_loadFinished(void *self, bool ok) {
 extern "C" __attribute__((visibility("default")))
 void _ntf_qtimer_singleShotImpl(int interval, Qt::TimerType type, const QObject *receiver, void *slot) {
     if (!real_qtimer_singleShotImpl) return;
-    bool loading = ntf_enabled() && ntf_fast_epub_delivery() && ntf_epub_delivery_ready()
-        && ntf_on_qt_thread(__func__) && ntf_parse_window_open();
-    int adjusted = ntf_epub_delivery_interval(loading, interval, receiver);
+    bool enabled = ntf_enabled() && ntf_fast_epub_delivery() && ntf_epub_delivery_ready();
+    const char *caller = __func__;
+    int adjusted = ntf_epub_delivery_interval(enabled, interval, receiver,
+        [caller] { return ntf_on_qt_thread(caller); }, ntf_parse_window_open);
     if (adjusted != interval) NTF_DBG("EPUB delivery: queued the next chunk without the 100 ms pause.");
     real_qtimer_singleShotImpl(adjusted, type, receiver, slot);
 }
