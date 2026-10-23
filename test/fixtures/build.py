@@ -50,11 +50,12 @@ def ornament():
             chunk(b'IDAT', zlib.compress(b''.join(rows))) + chunk(b'IEND', b''))
 
 
-def book(output, name, chapters, css='', vertical=False):
+def book(output, name, chapters, css='', vertical=False, synthetic=False):
     title = 'NTF ' + name
     language = 'ja' if vertical else 'en'
-    author = '夏目漱石' if vertical else 'Lewis Carroll'
-    source = '吾輩は猫である (1905–1906)' if vertical else "Alice’s Adventures in Wonderland (1865)"
+    author = 'NickelTypeFix' if synthetic else ('夏目漱石' if vertical else 'Lewis Carroll')
+    source = 'Synthetic typography samples' if synthetic else ('吾輩は猫である (1905–1906)' if vertical else "Alice’s Adventures in Wonderland (1865)")
+    description = 'Short phrases arranged as a typography test fixture.' if synthetic else 'Public-domain excerpts arranged as a NickelTypeFix test fixture.'
     uid = 'urn:nickeltypefix:fixture:' + name
     items = ''.join(f'<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>'
                     for i in range(len(chapters)))
@@ -65,7 +66,7 @@ def book(output, name, chapters, css='', vertical=False):
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="id">{uid}</dc:identifier><dc:title>{title}</dc:title>
 <dc:creator>{author}</dc:creator><dc:language>{language}</dc:language>
-<dc:source>{source}</dc:source><dc:description>Public-domain excerpts arranged as a NickelTypeFix test fixture.</dc:description>
+<dc:source>{source}</dc:source><dc:description>{description}</dc:description>
 <meta property="dcterms:modified">2026-09-27T00:00:00Z</meta>{mode}</metadata>
 <manifest>{items}<item id="css" href="style.css" media-type="text/css"/>
 <item id="figure" href="ornament.png" media-type="image/png"/>
@@ -127,6 +128,20 @@ def build(output):
     book(output, '14-small-caps', [('Small caps in prose', '<h1>Down the Rabbit-Hole</h1>'+sc),
          ('Ordinary capitals', chapter(alice[:4]))], '.smallcaps{font-variant:small-caps}')
     book(output, '15-long-chapter', [('Long chapter', chapter(alice*500)), ('Short chapter', chapter(alice[:3]))])
+    boundary_rows = [
+        '<i>Sol’s school!</i>', '<i>Sol</i>’s <i>school</i>!', 'Sol’s school!',
+        '<i><span>Sol</span></i><span>’s </span><i><span>school</span></i><span>!</span>',
+        '<em>Sol</em>’s <em>school</em>!', '<i>Sol </i>’s <i>school </i>!',
+        '<i>Sol</i><i>’s school!</i>', '<b><i>Sol</i>’s <i>school</i>!</b>',
+        '<span class="italic">Sol</span>’s <span class="italic">school</span>!',
+        '<i style="padding-right:.25em">Sol</i>’s <i style="margin-right:.25em">school</i>!',
+    ]
+    book(output, '16-italic-spacing', [('Italic boundaries',
+         '<p>Italic boundary checks</p>' + ''.join('<p>' + row + '</p>' for row in boundary_rows)),
+         ('Complex text boundaries', '<div style="text-rendering:optimizeLegibility"><p>Complex text checks</p>' +
+          ''.join('<p>' + row + '</p>' for row in boundary_rows) + '</div>')],
+         'p{text-indent:0;margin:.5em 0}.italic{font-style:italic}', synthetic=True)
+
 
 
 if __name__ == '__main__':

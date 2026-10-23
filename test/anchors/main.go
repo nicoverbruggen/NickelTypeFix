@@ -73,6 +73,16 @@ var fixes = []fixDef{
 	{"letter-spacing on spaces", "ntf_letterspace_spaces", []siteDef{
 		{"Gui", "LSP_ANCHOR", []editDef{{6, "LSP_A_ORIG"}, {12, "LSP_B_ORIG"}}},
 	}},
+	{"italic punctuation clearance", "ntf_italic_spacing", []siteDef{
+		{"WebKit", "IT_BLOCK_ANCHOR", nil},
+		{"WebKit", "IT_INLINE_ANCHOR", nil},
+		{"WebKit", "IT_FORMAT_ANCHOR", nil},
+		{"WebKit", "IT_WIDTH_ANCHOR", nil},
+		{"WebKit", "IT_CACHE_ANCHOR", nil},
+		{"WebKit", "IT_ADVANCE_ANCHOR", nil},
+		{"WebKit", "IT_SIMPLE_ABI_ANCHOR", nil},
+		{"WebKit", "IT_STYLE_ABI_ANCHOR", nil},
+	}},
 	// Fix 13 is a detour rather than a byte patch: the anchor IS the prologue that gets
 	// overwritten with a jump, so there are no separate original bytes to compare against.
 	// Present-and-unique is the entire safety condition, and checkSite settles that before it

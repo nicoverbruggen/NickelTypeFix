@@ -479,3 +479,16 @@ This runs only inside `ntf_init`. The two word stores do not make the eight-byte
 - The whole mod is inert on 5.x firmware (Qt6 / Chromium; NickelHook doesn't load there).
 - A healthy boot logs the firmware, build identity, and feature status. Detected installation failures, safety trips, and config errors are logged regardless of the verbosity setting. A config mistake also enables verbose logging for that boot. Set `ntf_log:1` for per-fix traces; an active status reports installation readiness, not proof of correct rendering.
 - Nothing is written to any device library on disk; a boot without the mod is stock.
+
+
+## Fix 16: Italic punctuation clearance · `ntf_italic_spacing`
+
+Upright punctuation can touch the slanted end of an italic word. Artikan shows this in an italic “Sol” followed by an upright apostrophe, and in an italic “school” followed by an upright exclamation point. A glyph's advance does not include all of its visible ink.
+
+The fix runs inside WebKit's native text layout. It checks the end of an italic text run and the next inline renderer. Ordinary runs return immediately. A matching boundary uses the glyphs, positions and advances that the reader has already produced, so there is no chapter DOM scan, canvas pass, CSS padding change, or forced second layout.
+
+Clearance follows CREngine's method: keep ink with opacity at least 64, spread both masks vertically by at least one pixel, and require a gap of at least one pixel, or one fortieth of the painted font size for larger text. Only missing clearance is added to the final italic glyph's advance. Native glyph masks use the selected font engine at the painted scale. The bounded cache keys include both font engines, glyphs, positions, advances and scale. Font changes and book destruction release cached font references.
+
+WebKit has two text paths. The simple path adjusts its width iterator and glyph buffer together. The complex path carries the boundary context into Qt's layout and adjusts the final glyph after shaping or cache replay. It keeps the original glyphs and kerning. The adjustment happens outside the shared shaping cache, and candidate runs bypass WebKit's text-only width cache. Text measurement, pagination, painting and cursor placement therefore use the same advance. A new font engine or size produces a new measurement.
+
+The correction covers horizontal, left-to-right inline italic text followed by upright punctuation at the same size. It leaves author padding or margins, nonzero letter spacing, small caps, transformed case, raised or lowered text, vertical text, and unsupported fallback runs unchanged. It is scoped to the active reader document. Native detours require unique verified WebKit signatures; an unsupported ABI leaves the fix inactive. The setting remains independent of the other fixes, including fast shaping.

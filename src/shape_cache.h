@@ -27,6 +27,11 @@ bool ntf_shape_detour_only(void *shape_text, void *shaper_old, void *shaper_ng);
 // Independent of the shaper selector and shaped-result cache. Missing symbols sit this out.
 bool ntf_line_layout_enable(void *shape_line);
 
+// Applied after a cache replay or a fresh shape, so context-specific advances
+// never enter the shared shaped-result cache.
+void ntf_shape_postprocess(void (*callback)(const void *, const void *, int, int));
+bool ntf_shape_detour_active(void);
+
 #ifdef __cplusplus
 }
 #endif

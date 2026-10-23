@@ -3,7 +3,7 @@
 Validates NickelTypeFix's in-memory byte-patch anchors against real Kobo firmware, the
 byte-patch analog of a NickelBench hook or lookup check.
 
-For each byte-patch fix (the two justification fixes and the letter-spacing fix) it
+For each byte-patch fix (the two justification fixes and the letter-spacing fix), plus the native italic-spacing detours and ABI guards, it
 confirms, in the firmware's own `libQtGui`/`libQtWebKit`, that every anchor is
 **present**, **unique**, and has the **expected original bytes** at each edit offset, then
 prints the firmware range the fix applies to.

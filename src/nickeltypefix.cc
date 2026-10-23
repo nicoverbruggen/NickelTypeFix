@@ -57,6 +57,8 @@
 #include <QGlyphRun>
 #include <QList>
 #include <QPainter>
+#include <QWidget>
+#include <QScopedValueRollback>
 #include <QPoint>
 #include <QPointF>
 #include <QRect>
@@ -71,6 +73,7 @@
 #include "shape_cache.h"
 #include "vertical_font.h"
 #include "epub_delivery.h"
+#include "italic_spacing.h"
 #include "detour.h"
 #include "small_caps.h"
 #include "font_dropdown.h"
@@ -166,6 +169,11 @@ ntf_center_images:1
 # cap the book floats is already correct and is left alone.
 ntf_dropcap_fix:1
 
+# Fix 16 - italic spacing: keep upright punctuation clear of the preceding italic ink.
+# Measure the selected font at its painted size before pagination, including after font or size
+# changes. Existing author spacing, vertical text and nonzero letter spacing are left alone.
+ntf_italic_spacing:1
+
 # Optional - replace the reader's 15 line-spacing choices with 24 closer ones. They run from 0.80
 # to 1.50, with the finest steps at the lower end. Kobo's own choices run from 1.00 to 3.00, so the
 # wide settings above 1.50 are not available while this is on. This changes the slider, not the
@@ -234,6 +242,7 @@ extern "C" const ntf_config_key_t ntf_config_keys[] = {
     { "ntf_skip_parse_layout",  "1", "Fix 13 - skip the layout WebKit does mid-parse and discards, so long chapters open faster" },
     { "ntf_fast_epub_delivery", "1", "Fix 15 - deliver local EPUB chunks without the fixed 100 ms pause" },
     { "ntf_smallcaps",          "1", "Fix 14 - use the reading font's own small caps for font-variant: small-caps" },
+    { "ntf_italic_spacing",      "1", "Fix 16 - keep upright punctuation clear of preceding italic letters" },
     { "ntf_more_spacing",       "0", "replace Kobo's 15 line-spacing choices with 24 closer ones (0.80 to 1.50)" },
     { "ntf_log",                "0", "verbose per-fix log to nickel-type-fix.log; off by default" },
     { NULL, NULL, NULL },
@@ -1238,6 +1247,8 @@ static void ntf_remove_superseded(void) {
 // ================= init =================
 static void ntf_log_unavailable_fixes();
 static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker);
+static void ntf_italic_native_install_hooks();
+static bool ntf_italic_spacing();
 static void ntf_parse_layout_install(void);   // FIX 13, defined with the rest of the fix
 // FIX 12: the three QTextEngine symbols the fix reads. shapeText is disassembled to find Qt's
 // shaper selector; the two shapers are the detour targets.
@@ -1571,14 +1582,15 @@ static int ntf_init() {
     // FIX 14: real small caps. Its post-pass lives in fix 12's shaper detour, so that detour has
     // to be running: with fix 12 off it is installed on its own, keeping no records. Then
     // QTextEngine::fontEngine is detoured so small caps items resolve to the full-size engine.
-    if (ntf_smallcaps()) {
-        ntf_crumb("enabling real small caps (fix 14)");
+    if (ntf_smallcaps() || ntf_italic_spacing()) {
+        ntf_crumb("enabling native text adjustments");
         bool detour = ntf_shape_status.cache_installed;
         if (!detour && !ntf_fast_shaping())
             detour = ntf_shape_detour_only(ntf_qte_shapeText, ntf_qte_shaperOld, ntf_qte_shaperNG);
-        ntf_smallcaps_status = ntf_smallcaps_enable(ntf_qte_fontEngine, detour, ntf_smallcaps_log_line);
+        if (ntf_smallcaps())
+            ntf_smallcaps_status = ntf_smallcaps_enable(ntf_qte_fontEngine, detour, ntf_smallcaps_log_line);
         NTF_DBG("startup: small caps detour=%d installed=%d", detour, ntf_smallcaps_status.installed);
-        if (!ntf_smallcaps_status.installed)
+        if (ntf_smallcaps() && !ntf_smallcaps_status.installed)
             NTF_LOG("Note: the small caps fix could not attach to Qt's text engine on this firmware, so it is sitting out (other fixes are unaffected).");
     }
 
@@ -1586,6 +1598,7 @@ static int ntf_init() {
     // After the byte patches, for the same reason as fix 12: their scans want unmodified code.
     ntf_crumb("installing mid-parse layout fix (fix 13)");
     ntf_parse_layout_install();
+    ntf_italic_native_install_hooks();
 
     ntf_crumb("init finished");
     ntf_crumb_clear_later();
@@ -1734,6 +1747,7 @@ void _ntf_setText(QLabel *label, const QString &text) {
 // Rebuild only that dropdown label once the call returns, while its font is available again.
 extern "C" __attribute__((visibility("default")))
 void _ntf_adjustFontFamily(void *self, const QString &family) {
+    if (ntf_on_qt_thread(__func__)) ntf_italic_native_reset();
     real_adjustFontFamily(self, family);
     if (!ntf_enabled() || !ntf_shape_status.ng_enabled) return;
     try {
@@ -2126,6 +2140,7 @@ static void ntf_pagecut_finalize_snaps(void *self) {
 // function's return value is passed back untouched. Nothing may unwind out of an extern "C" hook,
 // so the arming runs inside a try/catch, and the RAII frame rebalances the depth even when the
 // real call throws.
+
 extern "C" __attribute__((visibility("default")))
 void *_ntf_wv_locatePages(void *self, int reload) {
     // `fixing` is computed once per frame from per-boot-constant inputs, so entry and exit always
@@ -2540,6 +2555,94 @@ static void ntf_run_page_script(void *view, bool images, bool dropcap) {
     }
 }
 
+// FIX 16: native text-run boundary clearance.
+static bool ntf_italic_spacing() { return ntf_global_config_bool("ntf_italic_spacing", true); }
+static bool ntf_native_italic_ready = false;
+static bool ntf_italic_spacing_ready() { return ntf_native_italic_ready; }
+using NtfItalicObjectFn = void *(*)(const void *);
+using NtfItalicHandleFn = void (*)(void **, const void *);
+using NtfItalicDestroyFn = void (*)(void **);
+using NtfItalicZoomFn = double (*)(const void *);
+static NtfItalicObjectFn ntf_italic_frame;
+static NtfItalicZoomFn ntf_italic_zoom;
+static NtfItalicHandleFn ntf_italic_element, ntf_italic_parent;
+static NtfItalicDestroyFn ntf_italic_destroy_element, ntf_italic_destroy_node;
+static bool ntf_native_italic_api_ready() {
+    //nb lookup * 4.28.17623 * _ZNK13CustomWebView9mainFrameEv
+    ntf_italic_frame = reinterpret_cast<NtfItalicObjectFn>(dlsym(RTLD_DEFAULT, "_ZNK13CustomWebView9mainFrameEv"));
+    //nb lookup * 4.28.17623 * _ZNK13CustomWebView13effectiveZoomEv
+    ntf_italic_zoom = reinterpret_cast<NtfItalicZoomFn>(dlsym(RTLD_DEFAULT, "_ZNK13CustomWebView13effectiveZoomEv"));
+    // Nickel imports this QtWebKitWidgets function. The compatibility database
+    // does not index that library, so check its existing PLT import instead.
+    //nb hook libnickel 4.28.17623 * _ZNK9QWebFrame15documentElementEv
+    ntf_italic_element = reinterpret_cast<NtfItalicHandleFn>(dlsym(RTLD_DEFAULT, "_ZNK9QWebFrame15documentElementEv"));
+    //nb lookup * 4.28.17623 * _ZNK8QWebNode6parentEv
+    ntf_italic_parent = reinterpret_cast<NtfItalicHandleFn>(dlsym(RTLD_DEFAULT, "_ZNK8QWebNode6parentEv"));
+    //nb lookup * 4.28.17623 * _ZN11QWebElementD1Ev
+    ntf_italic_destroy_element = reinterpret_cast<NtfItalicDestroyFn>(dlsym(RTLD_DEFAULT, "_ZN11QWebElementD1Ev"));
+    //nb lookup * 4.28.17623 * _ZN8QWebNodeD1Ev
+    ntf_italic_destroy_node = reinterpret_cast<NtfItalicDestroyFn>(dlsym(RTLD_DEFAULT, "_ZN8QWebNodeD1Ev"));
+    // Both wrappers contain a private pointer followed by their retained Node.
+    // Check that ABI before allocating opaque return storage on our stack.
+    const unsigned char handle_abi[] = {0x00,0x23,0x80,0xb4,0x41,0x60,0x00,0xaf,0x03,0x60,0x11,0xb1,0x8b,0x68,0x01,0x33};
+    const char *constructors[] = {"_ZN8QWebNodeC1EPN7WebCore4NodeE", "_ZN11QWebElementC1EPN7WebCore7ElementE"};
+    //nb lookup * 4.28.17623 * _ZN8QWebNodeC1EPN7WebCore4NodeE
+    //nb lookup * 4.28.17623 * _ZN11QWebElementC1EPN7WebCore7ElementE
+    for (const char *symbol : constructors) {
+        const void *address = dlsym(RTLD_DEFAULT, symbol);
+        if (!address || memcmp(reinterpret_cast<const void *>(reinterpret_cast<uintptr_t>(address) & ~uintptr_t(1)), handle_abi, sizeof handle_abi)) return false;
+    }
+    return ntf_italic_frame && ntf_italic_zoom && ntf_italic_element && ntf_italic_parent
+        && ntf_italic_destroy_element && ntf_italic_destroy_node;
+}
+static double ntf_native_italic_scope(const void *renderer) {
+    if (!ntf_on_qt_thread(__func__) || !ntf_kepub_reader_view || !ntf_wv_webView) return 0;
+    const void *view = ntf_wv_webView(ntf_kepub_reader_view);
+    if (!view) return 0;
+    void *web_frame = ntf_italic_frame(view);
+    if (!web_frame) return 0;
+    void *html[2] = {}, *document[2] = {};
+    ntf_italic_element(html, web_frame);
+    if (html[1]) ntf_italic_parent(document, html);
+    const void *root = renderer;
+    for (int depth = 0; root && depth < 256; ++depth) {
+        const void *ancestor = nullptr;
+        memcpy(&ancestor, static_cast<const char *>(root) + 12, sizeof ancestor);
+        if (!ancestor) break;
+        root = ancestor;
+    }
+    const void *owner = nullptr;
+    if (root) memcpy(&owner, static_cast<const char *>(root) + 8, sizeof owner);
+    const bool matches = document[1] && owner == document[1];
+    ntf_italic_destroy_node(document); ntf_italic_destroy_element(html);
+    if (!matches) return 0;
+    return ntf_italic_zoom(view);
+}
+static void ntf_native_italic_log(const char *message) { NTF_DBG("%s", message); }
+static void ntf_italic_native_install_hooks() {
+    if (!ntf_enabled() || !ntf_italic_spacing() || !ntf_native_italic_api_ready()) return;
+    static const unsigned char IT_BLOCK_ANCHOR[] = {0x2d,0xe9,0xf8,0x4f,0x00,0xaf,0x1b,0x6b,0x80,0x46,0x89,0x46,0x93,0x46};
+    static const unsigned char IT_INLINE_ANCHOR[] = {0x2d,0xe9,0xf0,0x4f,0x0d,0x46,0x2d,0xed,0x02,0x8b,0x85,0xb0,0x00,0xaf};
+    static const unsigned char IT_FORMAT_ANCHOR[] = {0x2d,0xe9,0xf0,0x47,0x88,0xb0,0x00,0xaf,0x07,0xf1,0x18,0x04,0x91,0x46,0x05,0x46};
+    static const unsigned char IT_WIDTH_ANCHOR[] = {0x2d,0xe9,0xf0,0x41,0x05,0x46,0x2d,0xed,0x02,0x8b,0x88,0xb0,0x0c,0x46,0xc6,0x6a};
+    static const unsigned char IT_CACHE_ANCHOR[] = {0x2d,0xe9,0xf0,0x4f,0x83,0x46,0x2d,0xed,0x02,0x8b,0x9b,0xb0,0x00,0xaf,0x8b,0x68};
+    static const unsigned char IT_ADVANCE_ANCHOR[] = {0x2d,0xe9,0xf0,0x41,0x86,0xb0,0x45,0x68,0x0b,0x46,0x04,0x46,0x86,0x68};
+    static const unsigned char IT_SIMPLE_ABI_ANCHOR[] = {0x2d,0xe9,0xf0,0x4f,0x8b,0x46,0x2d,0xed,0x02,0x8b,0xad,0xf5,0x48,0x4d,0xb9,0xb0,0x02,0xaf};
+    static const unsigned char IT_STYLE_ABI_ANCHOR[] = {0x80,0xb4,0x00,0xaf,0xc0,0x69,0x10,0x30,0xbd,0x46,0x5d,0xf8,0x04,0x7b,0x70,0x47,0x98,0xb5,0x00,0xaf,0xc1,0x69};
+    const unsigned char *patterns[] = {IT_BLOCK_ANCHOR, IT_INLINE_ANCHOR, IT_FORMAT_ANCHOR, IT_WIDTH_ANCHOR, IT_CACHE_ANCHOR, IT_ADVANCE_ANCHOR, IT_SIMPLE_ABI_ANCHOR, IT_STYLE_ABI_ANCHOR};
+    const int lengths[] = {sizeof IT_BLOCK_ANCHOR, sizeof IT_INLINE_ANCHOR, sizeof IT_FORMAT_ANCHOR, sizeof IT_WIDTH_ANCHOR, sizeof IT_CACHE_ANCHOR, sizeof IT_ADVANCE_ANCHOR, sizeof IT_SIMPLE_ABI_ANCHOR, sizeof IT_STYLE_ABI_ANCHOR};
+    void *targets[8] = {};
+    for (int i = 0; i < 8; ++i) {
+        struct ntf_find found = {"WebKit", "Widgets", patterns[i], lengths[i], 0, NULL, NULL, 0, 0};
+        dl_iterate_phdr(ntf_find_cb, &found);
+        NTF_DBG("Native italic anchor %d matches=%d", i, found.total);
+        if (found.total != 1) return;
+        targets[i] = const_cast<unsigned char *>(found.match);
+    }
+    ntf_native_italic_ready = ntf_italic_native_install(targets[0], targets[1], targets[2], targets[3], targets[4], targets[5],
+        ntf_native_italic_scope, ntf_log() ? ntf_native_italic_log : nullptr);
+}
+
 // ================= optional 24-value line-spacing slider =================
 // ReadingSettings::lineHeightScalars() returns the QList the slider is built from:
 // 15 values, 1.00 to 3.00, on every 4.x firmware from the floor to 4.46. Hooking it
@@ -2667,7 +2770,7 @@ static struct nh_hook NickelTypeFixHooks[] = {
     // be identified; sortRectsByStart is a static function (no `this`) carrying the line rects the
     // page walk is about to read, and is where the fix retains them.
     { .sym = "_ZN10WebkitView11locatePagesEb", .sym_new = "_ntf_wv_locatePages",
-      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_locatePages), .desc = "fix 9: bracket a pagination pass", .optional = true },
+      .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_locatePages), .desc = "fix 9: bracket pagination", .optional = true },
     //nb hook libnickel 4.21.15015 * _ZN10WebkitView11locatePagesEb
     { .sym = "_ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection", .sym_new = "_ntf_wv_sortRects",
       .lib = "libnickel.so.1.0.0", .out = nh_symoutptr(real_wv_sortRects), .desc = "fix 9: retain the pass's line rects", .optional = true },
@@ -2745,6 +2848,7 @@ extern "C" __attribute__((visibility("default")))
 void _ntf_kepubReaderCtor(void *self, void *pluginState, void *widget) {
     bool on_qt = ntf_on_qt_thread(__func__);
     if (on_qt) {
+        ntf_italic_native_reset();
         ntf_kepub_reader = nullptr;
         ntf_kepub_reader_view = nullptr;
         ntf_chapter_view = nullptr;
@@ -2777,6 +2881,7 @@ void _ntf_kepubReaderDtor(void *self) {
         // anomaly): a dangling reader pointer is strictly worse than the race
         // being reported.
         (void)ntf_on_qt_thread(__func__);
+        ntf_italic_native_reset();
         ntf_kepub_reader = nullptr;
         ntf_kepub_reader_view = nullptr;
         ntf_chapter_view = nullptr;
@@ -2880,6 +2985,8 @@ static void ntf_log_unavailable_fixes() {
         NTF_LOG("Note: the mid-parse layout fix could not attach on this firmware, so it is sitting out (other fixes are unaffected).");
     if (ntf_fast_epub_delivery() && !ntf_epub_delivery_ready())
         NTF_LOG("Note: the EPUB delivery fix could not attach completely on this firmware, so the original chunk delays remain active.");
+    if (ntf_italic_spacing() && !ntf_italic_spacing_ready())
+        NTF_LOG("Note: the italic-spacing fix could not attach completely on this firmware, so it is sitting out (other fixes are unaffected).");
     if ((ntf_center_images() || ntf_dropcap_fix()) && !ntf_page_inspection_ready())
         NTF_LOG("Note: the page-inspection fixes could not attach completely on this firmware, so they are sitting out (other fixes are unaffected).");
 }
@@ -2912,6 +3019,7 @@ static void ntf_log_fix_statuses(ntf_hint_marker_state_t marker) {
     ntf_log_fix_row("Reader-font quoting", ntf_quote_fontfamily(), real_wv_addCssToHtml);
     ntf_log_fix_row("Page-boundary clipping", ntf_pagecut_trim(), ntf_pagecut_ready());
     ntf_log_fix_row("Centered images", ntf_center_images(), ntf_page_inspection_ready());
+    ntf_log_fix_row("Italic spacing", ntf_italic_spacing(), ntf_italic_spacing_ready());
     ntf_log_fix_row("Drop caps", ntf_dropcap_fix(), ntf_page_inspection_ready());
     ntf_log_fix_row("Fast text shaping", ntf_fast_shaping(), ntf_shape_status.ng_enabled);
     ntf_log_fix_row("Line layout", ntf_fast_shaping(), ntf_line_layout_ready);
@@ -2988,6 +3096,8 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         ntf_log_css_alignment(self == ntf_kepub_reader_view ? "injected by Nickel (reader view)"
                                                             : "injected by Nickel (other view)", *css);
     try {
+        if (ntf_enabled() && ntf_italic_spacing() && ntf_on_qt_thread(__func__)
+            && !ntf_kepub_reader_view) ntf_learn_reader_view(self);
         // WebkitView has two direct subclasses by typeinfo: KepubBookReaderBase (the reader)
         // and DictionaryWebview (the dictionary popup and the notebook).  Only a call on
         // the current KepubBookReader may arm Fix 6; otherwise a later page change
@@ -3023,6 +3133,7 @@ void _ntf_wv_addCssToHtml(void *self, QString *css) {
         if (ntf_enabled() && ntf_quote_fontfamily() && css) {
             ntf_quote_reader_fontfamily(*css);
         }
+
     } catch (...) {
         // Contain Qt allocation failures (see _ntf_cwv_setWritingDirection);
         // the injection then goes through unmodified, which is stock behavior.

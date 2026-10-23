@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Upright punctuation no longer touches preceding italic letters in kepubs. Clearance follows the selected font and size. Set `ntf_italic_spacing:0` to disable it.
+
 - Unrelated worker-thread timers no longer trigger the EPUB delivery thread warning. Matching EPUB timers on the wrong thread still warn and retain their original delay.
 
 ## v1.0

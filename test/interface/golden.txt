@@ -34,6 +34,8 @@ _ZN10WebkitView16sortRectsByStartER7QVectorI5QRectE16WritingDirection
 _ZN10WebkitView32evaluateJavaScriptWithBrokennessE7QString
 _ZN11QFontEngine15pluginInterfaceE
 _ZN11QTextEngine9shapeLineERK11QScriptLine
+_ZN11QWebElementC1EPN7WebCore7ElementE
+_ZN11QWebElementD1Ev
 _ZN12QWebSettings12setAttributeENS_12WebAttributeEb
 _ZN12QWebSettings13setFontFamilyENS_10FontFamilyERK7QString
 _ZN12QWebSettings20setUserStyleSheetUrlERK4QUrl
@@ -50,6 +52,8 @@ _ZN33ReadingMenuFontSettingsController16adjustFontFamilyERK7QString
 _ZN6QLabel7setTextERK7QString
 _ZN6QTimer14singleShotImplEiN2Qt9TimerTypeEPK7QObjectPN9QtPrivate15QSlotObjectBaseE
 _ZN8QPainter12drawGlyphRunERK7QPointFRK9QGlyphRunb
+_ZN8QWebNodeC1EPN7WebCore4NodeE
+_ZN8QWebNodeD1Ev
 _ZN9QWebFrame6renderEP8QPainterRK7QRegion
 _ZNK10WebkitView10totalPagesEv
 _ZNK10WebkitView7webViewEv
@@ -59,11 +63,16 @@ _ZNK11QTextEngine21shapeTextWithHarfbuzzERK11QScriptItemPKtiP11QFontEngineRK7QVe
 _ZNK11QTextEngine23shapeTextWithHarfbuzzNGERK11QScriptItemPKtiP11QFontEngineRK7QVectorIjEb
 _ZNK11QTextEngine9shapeTextEi
 _ZNK12QWebSettings17userStyleSheetUrlEv
+_ZNK13CustomWebView13effectiveZoomEv
 _ZNK13CustomWebView8settingsEv
+_ZNK13CustomWebView9mainFrameEv
 _ZNK15ReadingSettings17lineHeightScalarsEv
+_ZNK3WTF10StringImpl17getData16SlowCaseEv
 _ZNK8QRawFont17hasVerticalGlyphsEv
 _ZNK8QRawFont30substituteWithVerticalVariantsEPjj
+_ZNK8QWebNode6parentEv
 _ZNK8QWebPage15setViewportSizeERK5QSize
+_ZNK9QWebFrame15documentElementEv
 
 [target libraries]
 libQtGui.so.4
@@ -77,6 +86,7 @@ ntf_enabled = '1'
 ntf_fast_epub_delivery = '1'
 ntf_fast_shaping = '1'
 ntf_hinting_allowlist = ''
+ntf_italic_spacing = '1'
 ntf_justify_kospan = '1'
 ntf_justify_punct = '1'
 ntf_kepub_fontfix = '1'
@@ -98,6 +108,7 @@ ntf_enabled = '1'
 ntf_fast_epub_delivery = '1'
 ntf_fast_shaping = '1'
 ntf_hinting_allowlist = ''
+ntf_italic_spacing = '1'
 ntf_justify_kospan = '1'
 ntf_justify_punct = '1'
 ntf_kepub_fontfix = '1'
@@ -115,5 +126,5 @@ ntf_vertfix = '1'
 none
 
 [long string literals]
-count  332
-sha256 3379a52271811f1986147cb3ec66d376f44adf2a2ea402486446774e1676f2fa
+count  341
+sha256 7914d268b750e61598c71b488e4c8d951dcb8c576585acdbe5489649dacd1732

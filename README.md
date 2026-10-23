@@ -167,6 +167,7 @@ When you update the mod, any keys added by the new version are appended to your 
 | `ntf_skip_parse_layout` | `1` | Fix #13: skip the layout WebKit does mid-parse and then discards. |
 | `ntf_smallcaps` | `1` | Fix #14: use the reading font's own small caps for `font-variant: small-caps`. |
 | `ntf_fast_epub_delivery` | `1` | Fix #15: remove the fixed 100 ms pauses between local EPUB chunks. |
+| `ntf_italic_spacing` | `1` | Fix #16: keep upright punctuation clear of preceding italic letters. Recalculates when the font or size changes. |
 | `ntf_more_spacing` | `0` | Replace Kobo's 15 line-spacing choices with 24 closer ones, from `0.80` to `1.50`. |
 | `ntf_log` | `0` | Verbose logging to `nickel-type-fix.log`. Problems are logged either way. |
 

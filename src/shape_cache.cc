@@ -75,6 +75,11 @@ static void ntf_fill_justification(const QTextEngine *e, const QScriptItem &si,
 }
 
 static int ntf_install_cache(void *sym, bool ng = false);
+static void (*ntf_shape_post)(const void *, const void *, int, int) = 0;
+extern "C" void ntf_shape_postprocess(void (*callback)(const void *, const void *, int, int))
+{
+    ntf_shape_post = callback;
+}
 
 typedef void (*NtfShapeLineFn)(QTextEngine *, const QScriptLine &);
 static NtfShapeLineFn ntf_original_shape_line = 0;
@@ -118,6 +123,7 @@ extern "C" bool ntf_line_layout_enable(void *shape_line)
 typedef int (*ShapeFn)(const QTextEngine *, const QScriptItem &, const ushort *, int,
                        QFontEngine *, const QVector<uint> &, bool);
 static ShapeFn ntf_original_shape = 0;
+extern "C" bool ntf_shape_detour_active(void) { return ntf_original_shape != 0; }
 static bool ntf_shaper_is_ng = false;
 
 // Old HarfBuzz rounds GPOS advance adjustments when design metrics are off. NG keeps
@@ -367,6 +373,15 @@ extern "C" int ntf_cache_entry(const QTextEngine *e, const QScriptItem &si, cons
     return n;
 }
 
+static int ntf_shape_dispatch(const QTextEngine *e, const QScriptItem &si, const ushort *string,
+                              int length, QFontEngine *font, const QVector<uint> &boundaries,
+                              bool kerning)
+{
+    int count = ntf_cache_entry(e, si, string, length, font, boundaries, kerning);
+    if (ntf_shape_post && count > 0) ntf_shape_post(e, &si, length, count);
+    return count;
+}
+
 // ---- installation ------------------------------------------------------------------------------
 // Detour the shaper's prologue. Its first three instructions are position independent, so they can
 // be relocated into a trampoline and the original stays reachable through it.
@@ -479,7 +494,7 @@ static int ntf_install_cache(void *sym, bool ng)
     // instruction boundaries runs half an instruction on any firmware whose prologue differs, and
     // this installs at init while the boot failsafe is still armed.
     if (!sym) return -1;
-    const int result = ntf_detour_at(sym, (void *)&ntf_cache_entry, (void **)&ntf_original_shape, 0);
+    const int result = ntf_detour_at(sym, (void *)&ntf_shape_dispatch, (void **)&ntf_original_shape, 0);
     if (result == 0) ntf_shaper_is_ng = ng;
     return result;
 }
